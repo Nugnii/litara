@@ -21,6 +21,8 @@ English. Free and open source (GPL-3.0).
 **[⬇️ Download Litara for macOS](https://github.com/Nugnii/litara/releases/latest/download/Litara.dmg)** — macOS 13 or
 later, Apple Silicon and Intel.
 
+<p><img src="docs/demo.gif" alt="Litara: ghbdtn → привет, руддщ → hello, dbnf → витаю, защ → заўжды"></p>
+
 <p><img src="docs/screenshots/en-general.png" width="360" alt="Litara — General">
 <img src="docs/screenshots/en-stats.png" width="360" alt="Litara — Statistics"></p>
 

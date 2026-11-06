@@ -19,6 +19,8 @@ Litara выпраўляе на macOS тэкст, набраны не ў той �
 **[⬇️ Спампаваць Litara для macOS](https://github.com/Nugnii/litara/releases/latest/download/Litara.dmg)** — macOS 13 або
 навейшая, Apple Silicon і Intel.
 
+<p><img src="docs/demo.gif" alt="Litara: ghbdtn → привет, руддщ → hello, dbnf → витаю, защ → заўжды"></p>
+
 <p><img src="docs/screenshots/be-general.png" width="360" alt="Litara — Асноўныя">
 <img src="docs/screenshots/be-stats.png" width="360" alt="Litara — Статыстыка"></p>
 

@@ -21,6 +21,8 @@ i angielski. Darmowy program o otwartym kodzie (GPL-3.0).
 **[⬇️ Pobierz Litarę dla macOS](https://github.com/Nugnii/litara/releases/latest/download/Litara.dmg)** — macOS 13 lub nowszy,
 Apple Silicon i Intel.
 
+<p><img src="docs/demo.gif" alt="Litara: ghbdtn → привет, руддщ → hello, dbnf → витаю, защ → заўжды"></p>
+
 <p><img src="docs/screenshots/pl-general.png" width="360" alt="Litara — Ogólne">
 <img src="docs/screenshots/pl-stats.png" width="360" alt="Litara — Statystyki"></p>
 
