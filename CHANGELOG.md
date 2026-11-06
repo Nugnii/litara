@@ -4,6 +4,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-11-06
+
+### Fixed
+- Flags in the menu are easier to see in a dark menu.
+
 ## [0.29.0] - 2026-11-06
 
 ### Changed
