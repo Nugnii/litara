@@ -1,0 +1,14 @@
+.build/
+.swiftpm/
+.DS_Store
+# Рабочий журнал агента и доклады сессий — личные, не в репозитории. Документы агента (CLAUDE.md, BACKLOG*, ROOTS.md,
+# .claude-docs/, scripts/probes/) — в этом приватном репозитории, в открытый Nugnii/litara не идут: туда выпуск
+# уходит снимком scripts/publish.sh (решение владельца 2026-11-06, B2)
+SESSION.md
+.claude-docs/session-activity.md
+.claude-docs/sessions/*
+!.claude-docs/sessions/.gitkeep
+.claude-docs/narrative.md
+build/
+# Живые чаты для замеров строгости (Telegram-экспорты): чужие сообщения — только на этом Mac
+Corpora/
