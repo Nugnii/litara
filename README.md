@@ -8,6 +8,10 @@ English · [Беларуская](README.be.md) · [Polski](README.pl.md) · [Р
 [![Downloads](https://img.shields.io/github/downloads/Nugnii/litara/total?label=downloads)](https://github.com/Nugnii/litara/releases)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 
+> I never learned to touch-type, and I got tired of fixing text typed in the wrong keyboard layout. But the existing
+> apps did not support Belarusian and lacked the features I found useful: they switched the layout where it wasn't
+> needed, and there was no proper way to train them. So I had to roll up my sleeves and fix it.
+
 Litara fixes text typed in the wrong keyboard layout on macOS and switches the layout for you. Typed `ghbdtn`?
 It becomes `привет`. Typed `руддщ`? It becomes `hello`. Languages: Belarusian, Ukrainian, Polish, Russian and
 English. Free and open source (GPL-3.0).

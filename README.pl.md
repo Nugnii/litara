@@ -8,6 +8,10 @@
 [![Downloads](https://img.shields.io/github/downloads/Nugnii/litara/total?label=downloads)](https://github.com/Nugnii/litara/releases)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 
+> Nie piszę bezwzrokowo i zmęczyło mnie poprawianie tekstu wpisanego w złym układzie klawiatury. Istniejące programy
+> nie obsługiwały jednak języka białoruskiego i nie miały funkcji, które uważałem za przydatne: przełączały układ tam,
+> gdzie nie było to potrzebne, i nie dało się ich porządnie nauczyć. Musiałem zakasać rękawy i to naprawić.
+
 Litara poprawia na macOS tekst wpisany w złym układzie klawiatury i sama przełącza układ. Wpisałeś `ghbdtn`?
 Zamieni się w `привет`. Wpisałeś `руддщ`? Zamieni się w `hello`. Języki: białoruski, ukraiński, polski, rosyjski
 i angielski. Darmowy program o otwartym kodzie (GPL-3.0).
