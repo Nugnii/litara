@@ -19,9 +19,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
   is sent; turn it off in General. "Check for Updates…" is in the menu.
 - "Buy the author a coffee" link under the version in Statistics.
 - "What's new" link under the version in Statistics: opens the Litara releases page.
-- With flags turned on, RU gets a flag too, and the RU and BY flags follow the interface language: in Belarusian
-  and Ukrainian, RU is the flag of Mordor and BY is white-red-white; in other languages, RU is the Russian tricolour
-  and BY is the state flag of Belarus.
 
 ## [0.28.0] - 2026-11-06
 

@@ -324,8 +324,9 @@ extension Language {
                 NSColor.black.setFill()
                 NSBezierPath(ovalIn: NSRect(x: w * 0.41, y: h * 0.31, width: w * 0.18, height: h * 0.38)).fill()
             }
-            // белые полосы на светлой строке меню иначе сливаются с фоном
-            NSColor.gray.withAlphaComponent(0.6).setStroke()
+            // белые полосы на светлой строке меню иначе сливаются с фоном; чёрное полотно Мордора — с тёмным меню, и
+            // флажок кажется меньше остальных (проба владельца 2026-11-06) — у него рамка светлая
+            (self == .ru && free ? NSColor.white.withAlphaComponent(0.5) : NSColor.gray.withAlphaComponent(0.6)).setStroke()
             clip.lineWidth = 1
             clip.stroke()
             return true
