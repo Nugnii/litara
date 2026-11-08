@@ -19,18 +19,23 @@ public struct LanguageDetector: Sendable {
     /// набираются; строчными. И их начала — для исправления на лету.
     private let userWords: [Language: Set<String>]
     private let userPrefixes: [Language: Set<String>]
+    /// Тройки букв, которые встречаются в словах языка (`trigrams(of:)` по словарю, `bundledTrigrams`).
+    private let trigrams: [Language: Set<String>]
     /// Слова из текстов пользователя (встреченные не меньше двух раз, строчными): не та буква
     /// исправляется только в них (решение владельца 2026-10-21). Пусто — такой промах не исправляется.
     public var vocabulary: Set<String> = []
 
     /// `prefixes` — фильтры начал слов (`WordFilter.prefixRange`); без них исправления на лету нет.
     /// `userWords` — свой словарь («ZUS», «дупу»): известны там, где набираются одной раскладкой.
+    /// `trigrams` — тройки букв языков (`bundledTrigrams`); без них `impossibleCorrection` молчит.
     public init(layouts: [Language: KeyboardLayout], filters: [Language: WordFilter],
-                prefixes: [Language: WordFilter] = [:], checks: [Language: WordFilter] = [:], userWords: [String] = []) {
+                prefixes: [Language: WordFilter] = [:], checks: [Language: WordFilter] = [:], userWords: [String] = [],
+                trigrams: [Language: Set<String>] = [:]) {
         self.layouts = layouts
         self.filters = filters
         self.prefixes = prefixes
         self.checks = checks
+        self.trigrams = trigrams
         var words: [Language: Set<String>] = [:], starts: [Language: Set<String>] = [:]
         for word in userWords.map({ $0.lowercased() })
         where word.count >= 2 && word.allSatisfy({ $0.isLetter || $0 == "'" || $0 == "-" }) {
@@ -92,6 +97,119 @@ public struct LanguageDetector: Sendable {
         if words.count > 1, whole.count == 1 { return whole[0].language }
         guard words.count == 1 else { return nil }
         return words[0].language
+    }
+
+    /// Слово вне словарей (docs/spec.md, выбор владельца 2026-11-08 по замеру): набранное невозможно — в нём есть
+    /// тройка букв, которой нет ни в одном слове языков, где оно так пишется («шызще»: «шыз», «ызщ», «зще»), а в
+    /// другой письменности ровно один вариант возможен целиком («ispot»). Только где `correction` молчит: ни
+    /// набранное, ни варианты — не слова. Отдельно от `correction`: учёба слов (`learnableWords`) этим правилом не
+    /// отсекается — выученное «ші» и держит «ШІ» от «IB».
+    ///
+    /// ponytail: замер на журнале владельца (11 дней) — 6 из 22 промахов вне словаря, тронуто 2 слова из 9 808;
+    /// ложное держит откат ⌥ (третий кладёт слово в «Мои слова»). Строже — частотная модель (замер: меньше ловит).
+    /// `preferred` — язык предложения: из языков с тем же вариантом (ru и be) берётся он, иначе в белорусском предложении
+    /// раскладка уходила в русскую и «і» печаталась «и» (скептик 2026-11-08: «fltwt» → «адеце» [ru]).
+    public func impossibleCorrection(for keystrokes: [Keystroke], typedIn current: Language,
+                                     preferring preferred: Language? = nil) -> Language? {
+        guard let typed = layouts[current]?.text(for: keystrokes) else { return nil }
+        let word = Self.core(typed)
+        let letters = word.filter(\.isLetter)
+        // ponytail: до 40 знаков — `nearWord` растёт квадратично, а решение идёт в обработчике нажатий (скептик
+        // 2026-11-08: зажатая клавиша, 300 букв — 140 мс); длиннее — не слово
+        guard letters.count >= 2, word.count <= 40, let first = letters.first else { return nil }
+        // регистр обычный — строчными, ПРОПИСНЫМИ или с заглавной: «KBDiteF» — код, а не слово
+        let upper = letters.allSatisfy(\.isUppercase)
+        guard upper || letters.dropFirst().allSatisfy(\.isLowercase) && (first.isLowercase || first.isUppercase) else { return nil }
+        let latin = Self.isLatin(typed)
+        // короткие латинские ПРОПИСНЫЕ — аббревиатуры (DNS, EBRD): английских троек в них нет
+        if upper, latin, letters.count <= 4 { return nil }
+        let sameText = layouts.filter { $0.value.text(for: keystrokes) == typed }.keys
+        guard !sameText.contains(where: { isWord(typed, in: $0) }),
+              sameText.allSatisfy({ language in
+                  trigrams[language].map { table in Self.trigrams(of: typed).contains { !table.contains($0) } } ?? false
+              }),
+              // опечатка словарного слова («превет») — не чужая раскладка; и всё, что правит `typoCorrection`: «не»
+              // слитно с глаголом — правка не в одну букву («неулупіў» → «не улупіў», а не «ytekegbo»)
+              !sameText.contains(where: { nearWord(String(word), in: $0) || typoCorrection(for: keystrokes, typedIn: $0) != nil })
+        else { return nil }
+        let options = options(for: keystrokes, typedIn: current)
+        guard !options.contains(where: \.isWord) else { return nil }
+        var possible: [String: Language] = [:]
+        for option in options where Self.isLatin(option.text) != latin
+            && Self.core(option.text).allSatisfy({ $0.isLetter || $0.isNumber || "-'’./@_:".contains($0) }) {
+            // текст бывает у нескольких раскладок (ru и be без «і», «ў»): возможен хотя бы в одном языке
+            let grams = Self.trigrams(of: option.text)
+            let language = ((preferred.map { [$0] } ?? []) + Language.allCases).first { language in
+                !sameText.contains(language) && layouts[language]?.text(for: keystrokes) == option.text
+                    // мёртвая клавиша варианта («э» — апостроф «США международной») печатает не то, что в тексте:
+                    // «ОГЭ» → «JU», третья буква пропадает (R21)
+                    && layouts[language]?.renders(keystrokes) == true
+                    && lettersStayLetters(keystrokes, from: current, to: language, wordEnd: true)
+                    && trigrams[language].map { table in grams.allSatisfy(table.contains) } == true
+            }
+            if let language { possible[option.text] = language }
+        }
+        return possible.count == 1 ? possible.first?.value : nil
+    }
+
+    /// В одной правке от словарного слова — буква лишняя, пропущена, не та или соседние переставлены; от 4 букв.
+    /// Правок сотни, и ложные «да» одного фильтра копятся: слово должны знать два — проверочный, а где его нет (en,
+    /// uk, pl) — фильтр начал (слово до 8 букв — само себе начало). С одним фильтром сверка с замером 2026-11-08:
+    /// 216 из 3 533 переключений латиницы не случились — соседом оказывались «Kwjuj», «bqcnt».
+    func nearWord(_ word: String, in language: Language) -> Bool {
+        let w = Array(word.lowercased())
+        guard w.count >= 4, let filter = filters[language] else { return false }
+        let alphabet = Self.alphabets[language] ?? []
+        func known(_ chars: [Character]) -> Bool {
+            guard chars.count > 1, chars != w else { return false }
+            let lower = String(chars)
+            return [lower, lower.prefix(1).uppercased() + lower.dropFirst()].contains { form in
+                guard filter.contains(form) else { return false }
+                if let check = checks[language] { return check.contains(WordFilter.checkMarker + form) }
+                return prefixes[language]?.contains(String(form.prefix(WordFilter.prefixRange.upperBound))) ?? true
+            }
+        }
+        for i in 0...w.count {
+            var c = w
+            if i < w.count {
+                c.remove(at: i); if known(c) { return true }
+                if i + 1 < w.count { c = w; c.swapAt(i, i + 1); if known(c) { return true } }
+                for ch in alphabet where ch != w[i] { c = w; c[i] = ch; if known(c) { return true } }
+            }
+            for ch in alphabet { c = w; c.insert(ch, at: i); if known(c) { return true } }
+        }
+        return false
+    }
+
+    /// Тройки букв слов текста, строчными, с границами слова «^» и «$»: «Сям’я» → «^ся», «сям», «ям'», «м'я», «'я$».
+    /// Слово — буквы с апострофом внутри; цифры, дефис и знаки его делят. Так же их считает сборщик (`dictgen --trigrams`).
+    public static func trigrams(of text: String) -> [String] {
+        var result: [String] = [], run: [Character] = [], apostrophe = false
+        func flush() {
+            let p: [Character] = ["^"] + run + ["$"]
+            if !run.isEmpty { for i in 0...(p.count - 3) { result.append(String(p[i..<i + 3])) } }
+            run = []; apostrophe = false
+        }
+        for ch in text.lowercased() {
+            let ch: Character = ch == "’" ? "'" : ch
+            if ch.isLetter {
+                if apostrophe { run.append("'"); apostrophe = false }
+                run.append(ch)
+            } else if ch == "'", !run.isEmpty, !apostrophe {
+                apostrophe = true
+            } else {
+                flush()
+            }
+        }
+        flush()
+        return result
+    }
+
+    /// Тройки букв языка, собранные scripts/build_dictionaries.sh из его словаря и имён.
+    public static func bundledTrigrams(_ language: Language) -> Set<String>? {
+        guard let url = Bundle.module.url(forResource: language.rawValue, withExtension: "trigrams", subdirectory: "Resources"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        return Set(text.split(separator: "\n").map(String.init))
     }
 
     /// Исправление на лету: язык, в который надо исправить недописанное слово, или `nil`.
@@ -314,6 +432,10 @@ public struct LanguageDetector: Sendable {
     static let alphabets: [Language: [Character]] = [
         .ru: Array("абвгдеёжзийклмнопрстуфхцчшщъыьэюя"),
         .be: Array("абвгдеёжзійклмнопрстуўфхцчшыьэюя'"),
+        // en, uk, pl — только для `nearWord`: опечатки в них не исправляются (docs/spec.md)
+        .uk: Array("абвгґдеєжзиіїйклмнопрстуфхцчшщьюя'"),
+        .en: Array("abcdefghijklmnopqrstuvwxyz'"),
+        .pl: Array("aąbcćdeęfghijklłmnńoópqrsśtuvwxyzźż"),
     ]
 
     /// Начало слова без знаков впереди: «(пр» → «пр». Сзади не срезается — знак в одной раскладке

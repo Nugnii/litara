@@ -33,6 +33,26 @@ private func session(_ current: Language) throws -> (TypingSession, [Language: K
     #expect(s.current == .ru)
 }
 
+@Test @MainActor func impossibleWordIsRetypedOnSpace() throws {
+    // повод — «шызще» владельца 2026-11-08: «ispot» нет в словаре, но в русском нет и «шыз», «ызщ», «зще»
+    let (detector, layouts) = try makeDetector(ownerLayoutIDs, pcPunctuation: true)
+    var s = TypingSession(detector: detector, layouts: layouts, current: .ru)
+    #expect(try type("шызще ", in: &s, layouts: layouts) == [.replace(deleteCount: 5, text: "ispot"), .switchLayout(.en)])
+    #expect(s.lastDecision == "«шызще» [ru] → «ispot» [en]")
+}
+
+@Test @MainActor func impossibleWordKeepsSentenceLanguage() throws {
+    // скептик 2026-11-08: в белорусском предложении слово вне словарей уходило в русскую раскладку, и дальше «і»
+    // печаталась «и»; «панамара» одинакова и возможна в обеих
+    let (detector, layouts) = try makeDetector(ownerLayoutIDs, pcPunctuation: true)
+    var s = TypingSession(detector: detector, layouts: layouts, current: .en)
+    _ = try type("lpzreq ", in: &s, layouts: layouts)  // дзякуй
+    #expect(s.current == .be)
+    _ = try type("фззду ", in: &s, layouts: layouts)   // apple
+    #expect(s.current == .en)
+    #expect(try type("gfyfvfhf ", in: &s, layouts: layouts).last == .switchLayout(.be))
+}
+
 @Test @MainActor func rightWordIsLeftAlone() throws {
     var (s, layouts) = try session(.en)
     #expect(try type("hello world ", in: &s, layouts: layouts).isEmpty)
@@ -663,6 +683,95 @@ private func session(_ current: Language) throws -> (TypingSession, [Language: K
         }
         #expect(english && back >= 2, "круг дважды прошёл через английский и вернулся")
     }
+}
+
+@Test @MainActor func editErasesSuggestionSelectedAfterCaret() throws {
+    // B40, проба владельца 2026-11-07 в Spotlight: `ghbdtn` → «gпривет». Spotlight помнил запрос «ghbdtn» и за набранным
+    // держал выделенную подсказку — первый Backspace правки стирал её, а не букву. После стирания подсказка не возвращается
+    func spotlight(_ suggestionAware: Bool) throws -> String {
+        var (s, layouts) = try session(.en)
+        var before = "", selected = ""  // текст до курсора и выделенная подсказка за ним
+        func suggest() { selected = "ghbdtn".hasPrefix(before) ? String("ghbdtn".dropFirst(before.count)) : "" }
+        for ch in "ghbdtn" {
+            let key = try #require(layouts[.en]?.keystrokes(for: String(ch))?.first)
+            let shown = layouts[s.current]?.text(for: [key]) ?? ""
+            let actions = s.key(key)
+            guard !actions.isEmpty else { selected = ""; before += shown; suggest(); continue }
+            for case let .replace(deleteCount, text) in actions {
+                let presses = TypingSession.keypresses(deleting: deleteCount, typing: text,
+                                                       suggestionAfterCaret: suggestionAware && !selected.isEmpty)
+                for press in presses {
+                    switch press {
+                    case .forwardDelete: selected = ""
+                    case .backspace: if selected.isEmpty { before.removeLast() } else { selected = "" }
+                    case .text(let typed): selected = ""; before += typed
+                    }
+                }
+            }
+        }
+        return before + selected
+    }
+    #expect(try spotlight(false) == "gпривет", "без поправки — как у владельца")
+    #expect(try spotlight(true) == "привет")
+    // правка выделенного (ничего не стирается) печатается поверх выделения — лишнего Backspace нет
+    #expect(TypingSession.keypresses(deleting: 0, typing: "x", suggestionAfterCaret: true) == [.text("x")])
+}
+
+@Test func suggestionGoneBeforeEditLosesNoCharacter() {
+    // B43, R16: поле ответило «за курсором подсказка», а она исчезла до первого нажатия правки (приложение сменило её само
+    // или ещё не обработало прежнее нажатие). Лишний Backspace стёр бы знак перед словом; ⌦ без выделения в конце поля
+    // не стирает ничего (поле AppKit, опыт 2026-11-07: «погода ghbd» + ⌦ — без изменений, + ⌫ — «погода ghb»)
+    func edit(_ presses: [TypingSession.Keypress], suggestionGone: Bool) -> String {
+        var before = "погода ghbd", selected = suggestionGone ? "" : "tn"
+        for press in presses {
+            switch press {
+            case .forwardDelete: selected = ""
+            case .backspace: if selected.isEmpty { before.removeLast() } else { selected = "" }
+            case .text(let typed): selected = ""; before += typed
+            }
+        }
+        return before + selected
+    }
+    let presses = TypingSession.keypresses(deleting: 4, typing: "прив", suggestionAfterCaret: true)
+    #expect(presses.first == .forwardDelete)
+    #expect(edit(presses, suggestionGone: false) == "погода прив")
+    #expect(edit(presses, suggestionGone: true) == "погода прив")
+    // поправка B40 стирала подсказку Backspace'ом: исчезни подсказка — терялся пробел
+    let backspaceFirst = Array(repeating: TypingSession.Keypress.backspace, count: 5) + [.text("прив")]
+    #expect(edit(backspaceFirst, suggestionGone: true) == "погодаприв")
+}
+
+@Test @MainActor func fixHotkeyLeavesSuggestionSelectedAfterCaret() throws {
+    // B42, R17: автопереключение выключено, в Spotlight набрано «ghbd», за ним выделенная подсказка «tn» (Spotlight помнит
+    // «ghbdtn»). ⌥ читал выделение поля и правил подсказку — «ghbdет»; теперь правит набранное, подсказку стирает первой
+    func spotlightFix(_ suggestionAware: Bool) throws -> String {
+        var (s, layouts) = try session(.en)
+        s.autoCorrect = false
+        var before = "", selected = ""
+        for ch in "ghbd" {
+            let key = try #require(layouts[.en]?.keystrokes(for: String(ch))?.first)
+            #expect(s.key(key).isEmpty)
+            before += layouts[.en]?.text(for: [key]) ?? ""
+        }
+        selected = "tn"
+        let target = s.selectionToEdit(selected, suggestionAfterCaret: suggestionAware)
+        let actions = target.map { s.cycleSelection($0) } ?? s.cycleWord()
+        for case let .replace(deleteCount, text) in actions {
+            for press in TypingSession.keypresses(deleting: deleteCount, typing: text, suggestionAfterCaret: !selected.isEmpty) {
+                switch press {
+                case .forwardDelete: selected = ""
+                case .backspace: if selected.isEmpty { before.removeLast() } else { selected = "" }
+                case .text(let typed): selected = ""; before += typed
+                }
+            }
+        }
+        return before + selected
+    }
+    #expect(try spotlightFix(false) == "ghbdет", "без поправки ⌥ правит подсказку")
+    #expect(try spotlightFix(true) == "прив")
+    // выделение без набранного слова — выделение пользователя, даже если это хвост поля
+    let (fresh, _) = try session(.en)
+    #expect(fresh.selectionToEdit("tn", suggestionAfterCaret: true) == "tn")
 }
 
 @Test @MainActor func layoutFollowsWordNotSentence() throws {

@@ -36,14 +36,16 @@ func cyrillicLayoutsDifferOnKeysSAndB(name: String, keyS: String, keyB: String) 
     // ⌥ становилось то «вс’», то «вс“». «ё» в «Русской – ПК» — на 10 и 50; владелец 2026-11-06: «ё» набирает клавишей
     // слева от «1» — это 10. «+» в «Белорусской» — на 10⇧ и 24⇧: берётся обычная клавиша, 24⇧
     let ru = try #require(layout("RussianWin")), be = try #require(layout("Byelorussian"))
-    #expect(ru.chars[Keystroke(code: 10)] == "ё" && ru.chars[Keystroke(code: 50)] == "ё")
+    // ISO (по умолчанию, слева от «1» — 10): «ё» только на 10, на 50 — «]» (B44); на ANSI — на обеих
+    #expect(ru.chars[Keystroke(code: 10)] == "ё" && ru.chars[Keystroke(code: 50)] == "]")
     #expect(ru.keystrokes(for: "ё") == [Keystroke(code: 10)])
     #expect(be.keystrokes(for: "+") == [Keystroke(code: 24, shift: true)])
     #expect(be.converting("всё", from: ru) == "вс’")
     #expect(ru.converting("1+1", from: be) == "1+1")
     // американская (ANSI) клавиатура: слева от «1» — 50, «ё» там же; встроенная и внешняя бывают разными (владелец)
-    KeyboardLayout.leftOfOneKey = 50
-    defer { KeyboardLayout.leftOfOneKey = 10 }
+    KeyboardLayout.keyboardType = KeyboardLayout.firstType(kKeyboardANSI)
+    defer { KeyboardLayout.keyboardType = KeyboardLayout.firstType(kKeyboardISO) }
+    #expect(ru.chars[Keystroke(code: 10)] == "ё" && ru.chars[Keystroke(code: 50)] == "ё")
     #expect(ru.keystrokes(for: "ё") == [Keystroke(code: 50)])
     #expect(be.converting("всё", from: ru) == "вс“")
     #expect(be.keystrokes(for: "+") == [Keystroke(code: 24, shift: true)])
@@ -53,6 +55,60 @@ func cyrillicLayoutsDifferOnKeysSAndB(name: String, keyS: String, keyB: String) 
     let ansi = try #require(types.first { KBGetLayoutType(Int16($0)) == kKeyboardANSI })
     #expect(KeyboardLayout.leftOfOne(forKeyboardType: iso) == 10)
     #expect(KeyboardLayout.leftOfOne(forKeyboardType: ansi) == 50)
+}
+
+@Test @MainActor func keyTablesFollowTheTypingKeyboard() throws {
+    // B44, R18: таблица строилась под клавиатуру, которой печатали последней (`LMGetKbdType`), — после набора на ISO тест
+    // выше падал. Теперь `chars` — таблица типа клавиатуры нажатия (`keyboardType`)
+    let ansi = KeyboardLayout.firstType(kKeyboardANSI), iso = KeyboardLayout.firstType(kKeyboardISO)
+    defer { KeyboardLayout.keyboardType = iso }
+    let ru = try #require(layout("RussianWin")), be = try #require(layout("Byelorussian"))
+    // знаки ПК в белорусской: на ISO клавиша 50 «Русской – ПК» — знак «]», он и ставится; на ANSI там буква «ё» — у
+    // белорусской остаётся своё «“»
+    let pc = be.withPunctuation(of: ru)
+    KeyboardLayout.keyboardType = ansi
+    #expect(ru.chars[Keystroke(code: 50)] == "ё" && pc.chars[Keystroke(code: 50)] == "“")
+    KeyboardLayout.keyboardType = iso
+    #expect(ru.chars[Keystroke(code: 50)] == "]" && pc.chars[Keystroke(code: 50)] == "]")
+}
+
+@Test @MainActor func jisKeyboardUsesItsTable() throws {
+    // B45 (скептик B44): JIS попадал в таблицу ANSI, а у JIS свои знаки и мёртвые клавиши — и разные у разных типов JIS.
+    // Таблица Litara под каждый тип сверяется с ответом системы (`UCKeyTranslate`) по тем же нажатиям
+    let types = [KeyboardLayout.firstType(kKeyboardANSI), KeyboardLayout.firstType(kKeyboardISO)]
+        + (1...255).filter { KBGetLayoutType(Int16($0)) == kKeyboardJIS }.map(UInt32.init)
+    defer { KeyboardLayout.keyboardType = KeyboardLayout.firstType(kKeyboardISO) }
+    var wrong: [String] = []
+    for name in ["ABC", "USInternational-PC", "RussianWin", "Byelorussian", "PolishPro"] {
+        let l = try #require(layout(name))
+        let source = try #require((TISCreateInputSourceList([kTISPropertyInputSourceID: l.id] as CFDictionary, true)?
+            .takeRetainedValue() as? [TISInputSource])?.first)
+        let data = Unmanaged<CFData>.fromOpaque(try #require(TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)))
+            .takeUnretainedValue() as Data
+        for type in types {
+            KeyboardLayout.keyboardType = type
+            for code in UInt16(0)...50 { for shift in [false, true] { for option in [false, true] {
+                let key = Keystroke(code: code, shift: shift, option: option)
+                let (text, dead) = data.withUnsafeBytes { raw -> (String, Bool) in
+                    var state: UInt32 = 0, length = 0, buffer = [UniChar](repeating: 0, count: 4)
+                    let modifiers = UInt32(shift ? shiftKey >> 8 : 0) | UInt32(option ? optionKey >> 8 : 0)
+                    _ = UCKeyTranslate(raw.bindMemory(to: UCKeyboardLayout.self).baseAddress!, code, UInt16(kUCKeyActionDown),
+                                       modifiers, type, 0, &state, buffer.count, &length, &buffer)
+                    return (String(utf16CodeUnits: buffer, count: length), length == 0 && state != 0)
+                }
+                if l.chars[key] != (text.isEmpty ? nil : text) || (l.deadKeys[key] != nil) != dead {
+                    wrong.append("\(name) тип \(type) клавиша \(code)\(shift ? "⇧" : "")\(option ? "⌥" : "")")
+                }
+            } } }
+        }
+    }
+    #expect(wrong.isEmpty, "\(wrong.count): \(wrong.prefix(5))")
+    // и выбор действительно различает: у ABC на JIS клавиша 24 иная, чем на ANSI (замер скептика)
+    let abc = try #require(layout("ABC"))
+    KeyboardLayout.keyboardType = types[0]
+    let onANSI = abc.chars[Keystroke(code: 24)]
+    KeyboardLayout.keyboardType = types[2]
+    #expect(abc.chars[Keystroke(code: 24)] != onANSI)
 }
 
 @Test @MainActor func usInternationalPCApostropheIsDeadKey() throws {

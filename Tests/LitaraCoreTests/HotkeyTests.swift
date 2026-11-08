@@ -3,9 +3,9 @@ import Testing
 @testable import LitaraCore
 
 @Test func hotkeyStorage() throws {
-    let suite = "blalb-tests-\(UUID().uuidString)"
+    let suite = temporaryDefaultsName("hotkey")
     let defaults = try #require(UserDefaults(suiteName: suite))
-    defer { defaults.removePersistentDomain(forName: suite) }
+    defer { removeTemporaryDefaults(suite) }
 
     // умолчания docs/spec.md: ⌥ и ⌥⇧ — нажать и отпустить, транслит не назначен
     #expect(defaults.hotkey(.fix) == Hotkey(code: nil, flags: Hotkey.option))

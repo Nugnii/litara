@@ -4,6 +4,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-11-08
+
+### Added
+- "Send report to developer…" in Statistics: opens an email in your mail app with the decision log attached. You
+  see what is sent and send it yourself; Litara sends nothing by itself.
+- Words that are in no dictionary are fixed too, on space: when the typed text has three letters in a row that no
+  word of its language has, and the other script gives exactly one spelling without such letters ("шызще" becomes
+  "ispot"). Short Latin capitals (DNS), typos of dictionary words and your own words are left alone.
+
+### Fixed
+- With a selected suggestion after the cursor (Spotlight), the fix and transliterate hotkeys change the word you
+  typed, not the suggestion.
+- Keys are read as on the keyboard you type on — ANSI, ISO or JIS (in Russian – PC, the key next to the left Shift on
+  ISO and the key left of 1 on ANSI). Before, Litara took the keyboard typed on last before it started.
+- In Spotlight and other fields that show a selected suggestion after the cursor, a corrected word no longer keeps its
+  first letter in front ("ghbdtn" gave "gпривет" instead of "привет").
+- The fix hotkey on selected text works in the ChatGPT app for Mac. The app showed its text field to Litara only on the
+  request VoiceOver makes, and Litara did not make it. Right after you switch to ChatGPT, the first press may still miss.
+
 ## [0.29.1] - 2026-11-06
 
 ### Fixed

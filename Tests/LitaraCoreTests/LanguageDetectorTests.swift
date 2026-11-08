@@ -185,3 +185,73 @@ func typoReplay() throws {
     _ = s.separator(" ")
     #expect(s.takeLearned().contains("если"))
 }
+
+// Слово вне словарей — по невозможной тройке букв (выбор владельца 2026-11-08). Примеры — промахи из журнала владельца,
+// которые он исправлял ⌥: «шызще» — повод исследования, gmail, ERP, KPI — с 29.10 по 08.11. Латиница → кириллица —
+// «Тиктокер» вместо промаха журнала с матом: тесты уходят в открытый репозиторий.
+@Test(arguments: [
+    ("шызще", Language.ru, Language.en, "ispot"),  // «шыз», «ызщ», «зще» в русском не бывает
+    ("пьфшд", .ru, .en, "gmail"),
+    ("УКЗ", .ru, .en, "ERP"),                      // короткие ПРОПИСНЫЕ кириллицей — трогаются
+    ("ЛЗШ", .ru, .en, "KPI"),
+    ("Nbrnjrth", .en, .ru, "Тиктокер"),
+])
+@MainActor
+func impossibleWordGoesToThePossibleVariant(typed: String, current: Language, expected: Language, text: String) throws {
+    let (detector, layouts) = try makeDetector(ownerLayoutIDs, pcPunctuation: true)
+    let keys = try #require(layouts[current]?.keystrokes(for: typed))
+    #expect(detector.correction(for: keys, typedIn: current) == nil)  // словарь молчит: ни одного слова
+    let target = detector.impossibleCorrection(for: keys, typedIn: current)
+    #expect(target == expected)
+    #expect(target.flatMap { layouts[$0]?.text(for: keys) } == text)
+}
+
+// Каждое из них без своего фильтра переключилось бы (замер на чатах 2026-11-08): короткие латинские ПРОПИСНЫЕ —
+// аббревиатуры («DNS» → «ВТЫ»), опечатка словарного слова («Вырашыу» — «вырашыў», не «Dshfise»), регистр как у кода.
+// Скептик 2026-11-08: «неулупіў» — «не» слитно с глаголом, это правит typoCorrection («не улупіў»), а не «ytekegbo»;
+// «ОГЭ» — «э» в «США международной» мёртвый апостроф, вариант «JU» короче набранного (R21).
+@Test(arguments: [("DNS", Language.en), ("RTX", .en), ("Вырашыу", .be), ("гіфкі", .be), ("KBDiteF", .en),
+                  ("ghbdtn", .en),  // словарный вариант — решает correction, не это правило
+                  ("неулупіў", .be), ("ОГЭ", .ru)])
+@MainActor
+func impossibleWordRuleLeavesAlone(typed: String, current: Language) throws {
+    let (detector, layouts) = try makeDetector(ownerLayoutIDs, pcPunctuation: true)
+    let keys = try #require(layouts[current]?.keystrokes(for: typed))
+    #expect(detector.impossibleCorrection(for: keys, typedIn: current) == nil)
+}
+
+@Test @MainActor func learnedWordStopsImpossibleRule() throws {
+    let (fresh, layouts) = try makeDetector(ownerLayoutIDs, pcPunctuation: true)
+    let keys = try #require(layouts[.be]?.keystrokes(for: "ШІ"))
+    // новый пользователь: «ШІ» → «IB» (замер на чате «Беларускі ШІ» — 279 раз)
+    #expect(fresh.impossibleCorrection(for: keys, typedIn: .be) == .en)
+    // учёбу слов правило не отсекает: «ші» из своих текстов выучится, и правило замолчит
+    #expect(fresh.learnableWords(in: "ШІ ШІ ші").contains("ші"))
+    let (learned, _) = try makeDetector(ownerLayoutIDs, pcPunctuation: true, userWords: ["ші"])
+    #expect(learned.impossibleCorrection(for: keys, typedIn: .be) == nil)
+}
+
+@Test @MainActor func impossibleWordRuleSkipsLongTokens() throws {
+    // зажатая клавиша или склейка — не слово; потолок в 40 знаков держит обработчик нажатий быстрым (скептик 2026-11-08:
+    // 300 букв — 140 мс)
+    let (detector, layouts) = try makeDetector(ownerLayoutIDs, pcPunctuation: true)
+    let ru = try #require(layouts[.ru])
+    let forty = try #require(ru.keystrokes(for: String(repeating: "шызще", count: 8)))
+    #expect(detector.impossibleCorrection(for: forty, typedIn: .ru) == .en)
+    let longer = try #require(ru.keystrokes(for: String(repeating: "шызще", count: 9)))
+    #expect(detector.impossibleCorrection(for: longer, typedIn: .ru) == nil)
+}
+
+@Test @MainActor func impossibleWordPrefersSentenceLanguage() throws {
+    // «панамара» одинакова и возможна в ru и be: без языка предложения — порядок языков, с ним — он
+    let (detector, layouts) = try makeDetector(ownerLayoutIDs, pcPunctuation: true)
+    let keys = try #require(layouts[.en]?.keystrokes(for: "gfyfvfhf"))
+    #expect(detector.impossibleCorrection(for: keys, typedIn: .en) == .ru)
+    #expect(detector.impossibleCorrection(for: keys, typedIn: .en, preferring: .be) == .be)
+}
+
+@Test func trigramsOfText() {
+    #expect(LanguageDetector.trigrams(of: "Сям’я") == ["^ся", "сям", "ям'", "м'я", "'я$"])
+    // цифры, дефис и двойной апостроф делят слова
+    #expect(LanguageDetector.trigrams(of: "a''b 2x-y") == ["^a$", "^b$", "^x$", "^y$"])
+}

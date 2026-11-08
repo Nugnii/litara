@@ -375,9 +375,25 @@ struct SettingsView: View {
                 ))
                 Text(L10n.text(.logHint, ui)).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)  // форма иначе обрезает подпись в одну строку
+                Button(L10n.text(.sendReport, ui)) { Self.sendReport(ui) }
+                Text(L10n.text(.sendReportHint, ui)).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// Отчёт разработчику (решение владельца 2026-11-06, B32): письмо в программе почты, журнал решений — во вложении,
+    /// если записан. Сама Litara ничего не отправляет: человек видит вложение и отправляет письмо сам.
+    /// ponytail: нет программы почты — кнопка молчит; нужно будет — mailto: и журнал в Finder.
+    static func sendReport(_ ui: Language) {
+        guard let mail = NSSharingService(named: .composeEmail) else { return }
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        mail.recipients = ["litaraby@gmail.com"]
+        mail.subject = "Litara \(version) — " + L10n.text(.sendReportSubject, ui)
+        var items: [Any] = ["Litara \(version), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)\n\n"]
+        if FileManager.default.fileExists(atPath: Settings.logURL.path) { items.append(Settings.logURL) }
+        mail.perform(withItems: items)
     }
 
     /// Ячейка таблицы замен — поле строки `id`.

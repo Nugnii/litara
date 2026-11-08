@@ -65,9 +65,9 @@ private func tempDir() throws -> URL {
 /// возвращается без спроса; (б) хранить в Litara список удалённых слов — цена: ещё один ключ и его рост;
 /// (в) добавлять только слова, которых не было в прежнем снимке — цена: снимок слов вместо отпечатка.
 @Test func adversaryRenameR2ForgottenWordsStayForgotten() throws {
-    let oldName = "litara-adv-\(UUID().uuidString)", newName = "litara-adv-\(UUID().uuidString)"
+    let oldName = temporaryDefaultsName("old"), newName = temporaryDefaultsName("new")
     let old = try #require(UserDefaults(suiteName: oldName)), new = try #require(UserDefaults(suiteName: newName))
-    defer { old.removePersistentDomain(forName: oldName); new.removePersistentDomain(forName: newName) }
+    defer { removeTemporaryDefaults(oldName, newName) }
     old.set(["один", "два"], forKey: "learnedWords")
     old.set(["ZUS", "GPT"], forKey: "exceptions")
     SettingsMigration.migrate(new, from: oldName)

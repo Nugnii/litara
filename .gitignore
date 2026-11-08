@@ -12,3 +12,5 @@ SESSION.md
 build/
 # Живые чаты для замеров строгости (Telegram-экспорты): чужие сообщения — только на этом Mac
 Corpora/
+.claude-docs/project-graph.json
+.claude/

@@ -17,6 +17,8 @@ for lang in en ru be uk pl; do
   fi
   "$dictgen" "$out/$lang.bloom" < "$words/$lang.txt"
   "$dictgen" --prefixes "$out/$lang.prefix.bloom" < "$words/$lang.txt"
+  # тройки букв слов — для слова вне словарей (LanguageDetector.impossibleCorrection)
+  "$dictgen" --trigrams "$out/$lang.trigrams" < "$words/$lang.txt"
   # проверочный фильтр — только языкам, где исправляются опечатки (docs/spec.md)
   case $lang in ru|be) "$dictgen" --check "$out/$lang.check.bloom" < "$words/$lang.txt" ;; esac
 done

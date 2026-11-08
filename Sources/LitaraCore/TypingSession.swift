@@ -277,8 +277,10 @@ public struct TypingSession {
         }
         token.replaced = replacement
         let mayCorrect = replacement == nil && autoCorrect && typedCleanly && !isException && !wordDecided
-        var target = mayCorrect ? detector.correction(for: token.keys, typedIn: current).map { textLanguage(over: $0, keys: token.keys, whole: true) }
-            ?? tieBetweenCyrillics(token.keys) : nil
+        // слово вне словарей — по невозможной тройке букв, где словарь молчит (выбор владельца 2026-11-08)
+        var target = mayCorrect ? (detector.correction(for: token.keys, typedIn: current)
+            ?? detector.impossibleCorrection(for: token.keys, typedIn: current, preferring: textLanguage))
+            .map { textLanguage(over: $0, keys: token.keys, whole: true) } ?? tieBetweenCyrillics(token.keys) : nil
         // Раскладку решает слово, а не прежние слова предложения (принцип владельца 2026-11-06, B24): часть фразы
         // пишется в любой раскладке. Запрет B20/B22 «из русской фразы — только явно белорусское» снят.
         // ponytail: русское слово вне словаря («запасик» → «запасік») уходит в белорусскую — цена, выбранная владельцем
@@ -580,14 +582,27 @@ public struct TypingSession {
     }
 
     /// Нажатие правки: знак или Backspace.
-    public enum Keypress: Equatable, Sendable { case text(String), backspace }
+    public enum Keypress: Equatable, Sendable { case text(String), backspace, forwardDelete }
+
+    /// Выделенный текст, который правят ⌥ и транслит. Выделенный хвост поля за набранным словом (`suggestionAfterCaret` —
+    /// ответ поля, R16) поставило приложение — подсказка Spotlight, адресной строки: клик, стрелки и ⌘-сочетания сеанс
+    /// сбрасывают, и выделить самому, не сбросив набор, нельзя. Такое выделение не правится — правится набранное слово,
+    /// а подсказку правка сотрёт первой (B42, R17; B40).
+    public func selectionToEdit(_ selected: String?, suggestionAfterCaret: Bool) -> String? {
+        hasState && suggestionAfterCaret ? nil : selected
+    }
 
     /// Нажатия правки «стереть N и напечатать». Litara печатает как живой набор, и приложение с автозакрытием (Notepad++,
     /// VS Code) на «[» само ставит «]» за курсор — Litara о ней не знает, и она остаётся (B19, R9). Поэтому после
     /// открывающей — закрывающая и Backspace: с автозакрытием закрывающая перепечатывает вставленную, без него стирается.
     /// ponytail: автозакрытие без перепечатки закрывающей оставит «]», как и прежде, — не хуже
-    public static func keypresses(deleting count: Int, typing text: String) -> [Keypress] {
-        Array(repeating: .backspace, count: count) + text.flatMap { ch -> [Keypress] in
+    /// `suggestionAfterCaret` — за курсором выделенная подсказка приложения (Spotlight, адресная строка): первый Backspace
+    /// стёр бы её, а не знак (B40), поэтому первой идёт ⌦ — она стирает выделенный хвост, а если подсказка исчезла до
+    /// нажатия (поле ответило раньше, B43), курсор в конце поля и ⌦ не стирает ничего; Backspace стёр бы знак перед
+    /// словом. Без стирания (`count == 0`, правка выделенного) текст печатается поверх выделения — лишнего нажатия нет.
+    public static func keypresses(deleting count: Int, typing text: String, suggestionAfterCaret: Bool = false) -> [Keypress] {
+        (count > 0 && suggestionAfterCaret ? [.forwardDelete] : []) + Array(repeating: .backspace, count: count)
+            + text.flatMap { ch -> [Keypress] in
             guard let closer = autoClosers[ch] else { return [.text(String(ch))] }
             return [.text(String(ch)), .text(String(closer)), .backspace]
         }

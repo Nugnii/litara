@@ -44,9 +44,10 @@ final class KeyboardMonitor {
     private var runLoopSource: CFRunLoopSource?
     private var observing = false
     private var activationObserver: NSObjectProtocol?
-    /// Знаки «как в Русской – ПК» в белорусской раскладке: нажатие → знак ПК (macOS напечатала бы знак Apple).
-    /// Сеанс знает те же знаки (`withPunctuation`). Пусто, если «Русская – ПК» не включена.
-    private var pcPunctuation: [Keystroke: String] = [:]
+    /// Знаки «как в Русской – ПК» в белорусской раскладке: белорусская Apple и она же со знаками ПК — где они расходятся,
+    /// печатается знак ПК (macOS напечатала бы знак Apple). Сеанс знает те же знаки (`withPunctuation`). Читается по
+    /// нажатию, а не один раз: знаки ПК у ANSI и ISO разные (R18). `nil`, если «Русская – ПК» не включена.
+    private var pcPunctuation: (apple: KeyboardLayout, pc: KeyboardLayout)?
     /// Нажатые без клавиш модификаторы — кандидат в хоткей «нажать и отпустить» (⌥, ⇧⌥).
     private var modifierTap: (flags: CGEventFlags, since: Date)?
     private var heldModifiers: CGEventFlags = []
@@ -79,19 +80,21 @@ final class KeyboardMonitor {
         // ПК» (проба владельца 2026-10-21) — знаковые клавиши печатают знаки ПК; буквы не трогаются
         // сеансу — та же раскладка, что на экране: прежде он получал нажатие Apple, дающее знак ПК (⇧7 вместо
         // «/» для «.»), и круг ⌥ видел в белорусской «/» — «.» уходила в белорусскую (проба 2026-10-21)
-        var pc: [Keystroke: String] = [:]
+        var pc: (apple: KeyboardLayout, pc: KeyboardLayout)?
         if let be = layouts[.be], let ru = layouts[.ru], ru.id == "com.apple.keylayout.RussianWin" {
             let withPC = be.withPunctuation(of: ru)
-            pc = withPC.chars.filter { be.chars[$0.key] != $0.value }
+            pc = (be, withPC)
             layouts[.be] = withPC
         }
         var filters: [Language: WordFilter] = [:]
         var prefixes: [Language: WordFilter] = [:]
         var checks: [Language: WordFilter] = [:]
+        var trigrams: [Language: Set<String>] = [:]
         for language in layouts.keys {
             filters[language] = WordFilter.bundled(language)
             prefixes[language] = WordFilter.bundledPrefixes(language)
             checks[language] = WordFilter.bundledCheck(language)
+            trigrams[language] = LanguageDetector.bundledTrigrams(language)
         }
         let current = Self.currentID().flatMap { languageByID[$0] }
 
@@ -102,7 +105,7 @@ final class KeyboardMonitor {
         // сеансу нужен язык и тогда, когда текущая раскладка не наша: набор в ней не обрабатывается
         let start = current.flatMap { sources[$0] != nil ? $0 : nil } ?? Language.allCases.first { sources[$0] != nil } ?? .en
         var detector = LanguageDetector(layouts: layouts, filters: filters, prefixes: prefixes, checks: checks,
-                                        userWords: exceptions + learned)
+                                        userWords: exceptions + learned, trigrams: trigrams)
         detector.vocabulary = Set(vocabulary)
         self.detector = detector
         session = TypingSession(detector: detector, layouts: layouts, current: start)
@@ -157,8 +160,27 @@ final class KeyboardMonitor {
         }
     }
 
-    private static func requestAccessibility(_ pid: pid_t) {
-        AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    /// Просит приложение построить дерево «Универсального доступа»; `true` — оно поняло просьбу Electron (`AXManualAccessibility`).
+    /// Chromium без Electron (ChatGPT на движке Owl) её не знает (-25205) и до просьбы VoiceOver — `AXEnhancedUserInterface` — не
+    /// отдаёт ни поле, ни фокус (B46, R20; замер 2026-11-07: у окна ChatGPT 11 элементов, после просьбы, когда приложение впереди, —
+    /// 522 и поле ввода). Её получает только приложение, которое фокус не отдаёт: у прочих она замедляет перемещение окон извне —
+    /// ради этого Electron и завёл свою.
+    /// ponytail: флаг не снимается — построенное дерево приложение может обновлять и в фоне; станет грузить процессор на длинных
+    /// ответах ChatGPT — снимать при уходе приложения с переднего плана
+    @discardableResult
+    private static func requestAccessibility(_ pid: pid_t) -> Bool {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.2)  // зависшее приложение не держит набор
+        let electron = AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        var focused: CFTypeRef?
+        if electron == .attributeUnsupported, AXUIElementCopyAttributeValue(app, "AXFocusedUIElement" as CFString, &focused) == .noValue {
+            AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+            if Settings.logDecisions {
+                let name = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "?"
+                Settings.appendLog("\(name) не отдаёт фокус — прошу дерево доступа, как VoiceOver (AXEnhancedUserInterface)")
+            }
+        }
+        return electron == .success
     }
 
     func stop() {
@@ -299,8 +321,9 @@ final class KeyboardMonitor {
         let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         // тип клавиатуры — из нажатия: внешняя и встроенная бывают ISO и ANSI, «ё» слева от «1» у них на разных кодах (B25)
         let keyboardType = event.getIntegerValueField(.keyboardEventKeyboardType)
-        if keyboardType > 0, case let left = KeyboardLayout.leftOfOne(forKeyboardType: keyboardType), left != KeyboardLayout.leftOfOneKey {
-            KeyboardLayout.leftOfOneKey = left
+        if keyboardType > 0, case let type = UInt32(truncatingIfNeeded: keyboardType), type != KeyboardLayout.keyboardType {
+            KeyboardLayout.keyboardType = type  // таблица раскладки — под эту клавиатуру (R18)
+            let left = KeyboardLayout.leftOfOneKey
             if Settings.logDecisions { Settings.appendLog("клавиатура \(left == 10 ? "ISO" : "ANSI") (тип \(keyboardType)): слева от «1» — код \(left)") }
         }
         let action = hotkeyAction(code: code, flags: flags.intersection(Self.modifierMask))
@@ -324,7 +347,7 @@ final class KeyboardMonitor {
         default:
             // ponytail: Caps Lock не учитывается — при нём исправленное слово выйдет строчными
             let keystroke = Keystroke(code: code, shift: flags.contains(.maskShift), option: flags.contains(.maskAlternate))
-            if current == .be, let text = pcPunctuation[keystroke] {
+            if current == .be, let pc = pcPunctuation, let text = pc.pc.chars[keystroke], text != pc.apple.chars[keystroke] {
                 // на экран — знак ПК, сеансу — само нажатие: его раскладка уже со знаками ПК
                 let actions = session.key(keystroke)
                 if actions.isEmpty { postText(text) } else { logDecision(); perform(actions) }
@@ -370,9 +393,14 @@ final class KeyboardMonitor {
         for action in actions {
             switch action {
             case let .replace(deleteCount, text):
-                // с поправкой на автозакрытие скобок в приложении (R9)
-                for press in TypingSession.keypresses(deleting: deleteCount, typing: text) {
-                    if case .text(let typed) = press { postText(typed) } else { postKey(51) }
+                // с поправкой на автозакрытие скобок (R9) и на подсказку за курсором (B40, R16)
+                let suggestion = deleteCount > 0 && Self.suggestionAfterCaret()
+                for press in TypingSession.keypresses(deleting: deleteCount, typing: text, suggestionAfterCaret: suggestion) {
+                    switch press {
+                    case .text(let typed): postText(typed)
+                    case .backspace: postKey(51)
+                    case .forwardDelete: postKey(117)  // ⌦: стирает выделенную подсказку, без неё в конце поля — ничего
+                    }
                 }
             case let .switchLayout(language):
                 guard let source = sources[language] else { continue }
@@ -426,11 +454,11 @@ final class KeyboardMonitor {
         case .changeCase:
             perform(session.changeCase())
         case .transliterate:
-            perform(session.transliterate(selection: Self.selectedText().text))
+            perform(session.transliterate(selection: selectionToEdit().text))
             logDecision()
         case .fix:
             // выделенный текст важнее последнего слова (docs/spec.md)
-            let selection = Self.selectedText()
+            let selection = selectionToEdit()
             if let text = selection.text {
                 perform(session.cycleSelection(text))
                 logDecision()  // и отказ: cycleSelection называет причину
@@ -447,6 +475,15 @@ final class KeyboardMonitor {
                 if let word = session.lastRollback { onRollback?(word) }
             }
         }
+    }
+
+    /// Выделенный текст для ⌥ и транслита: выделенная подсказка приложения за набранным словом — не выделение (B42, R17).
+    /// О подсказке поле спрашивается, только когда от ответа что-то зависит: выделение есть и слово набрано.
+    private func selectionToEdit() -> (text: String?, note: String) {
+        let selection = Self.selectedText()
+        let suggestion = selection.text != nil && session.hasState && Self.suggestionAfterCaret()
+        let text = session.selectionToEdit(selection.text, suggestionAfterCaret: suggestion)
+        return text == nil && selection.text != nil ? (nil, "выделена подсказка приложения") : (text, selection.note)
     }
 
     /// Выделенный текст поля в фокусе — через «Универсальный доступ», без буфера обмена.
@@ -472,10 +509,51 @@ final class KeyboardMonitor {
             return (text, "")
         }
         let first = read()
-        guard first.text == nil, let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return first }
-        let app = AXUIElementCreateApplication(pid)
-        guard AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue) == .success else { return first }
+        // Electron строит дерево сразу — читаем ещё раз; ChatGPT — за секунды (замер: 1–2,5 с, если просить впереди;
+        // при активации — дольше 3,5 с): сработает следующее нажатие (R20)
+        guard first.text == nil, let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              requestAccessibility(pid) else { return first }
         return read()
+    }
+
+    /// За курсором — выделенная подсказка автодополнения (Spotlight, адресная строка): выделен хвост текста поля до конца
+    /// (B40). Клик и стрелки сбрасывают сеанс, поэтому при правке слова выделение поставило приложение, а не пользователь.
+    /// Многострочный текст (`AXTextArea`: Терминал, редакторы) — не подсказка: в Терминале выделение мышью набор не снимает.
+    /// ponytail: признак — выделение до конца текста однострочного поля; там, где набор выделение пользователя не снимает,
+    /// оно примется за подсказку и сотрётся лишний знак — тогда сравнивать текст перед выделением с напечатанным словом
+    private static func suggestionAfterCaret() -> Bool {
+        guard !NSApp.isActive else { return false }  // своё окно: вопрос к себе с главного потока ждал бы таймаута
+        func note(_ text: String) { if Settings.logDecisions { Settings.appendLog("за курсором " + text) } }
+        let system = AXUIElementCreateSystemWide()
+        // правка ждёт ответа до первого Backspace, а набор идёт дальше: медленное поле — без поправки, как прежде (B43)
+        AXUIElementSetMessagingTimeout(system, 0.05)
+        defer { AXUIElementSetMessagingTimeout(system, 0.2) }
+        var focused: CFTypeRef?, rangeValue: CFTypeRef?
+        let found = AXUIElementCopyAttributeValue(system, "AXFocusedUIElement" as CFString, &focused)
+        guard found == .success, let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else {
+            note("не спросить: фокус не отдан (AX \(found.rawValue))")
+            return false
+        }
+        let element = focused as! AXUIElement
+        var range = CFRange()
+        let read = AXUIElementCopyAttributeValue(element, "AXSelectedTextRange" as CFString, &rangeValue)
+        guard read == .success, let rangeValue, CFGetTypeID(rangeValue) == AXValueGetTypeID(),
+              AXValueGetValue(rangeValue as! AXValue, .cfRange, &range) else {
+            note("не спросить: выделение не отдано (AX \(read.rawValue))")
+            return false
+        }
+        guard range.length > 0 else { return false }
+        var role: CFTypeRef?, count: CFTypeRef?, value: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, "AXRole" as CFString, &role)
+        // длина текста: число знаков (дёшево и в большом поле), иначе сам текст
+        let total = AXUIElementCopyAttributeValue(element, "AXNumberOfCharacters" as CFString, &count) == .success
+            ? count as? Int
+            : AXUIElementCopyAttributeValue(element, "AXValue" as CFString, &value) == .success ? (value as? String)?.utf16.count : nil
+        let roleName = role as? String ?? "?"
+        let suffix = roleName != "AXTextArea" && range.location > 0 && range.location + range.length == total
+        note("выделение \(range.location)+\(range.length) из \(total.map(String.init) ?? "?") (\(roleName)): "
+            + (suffix ? "подсказка приложения — стираю первым" : "не подсказка — не трогаю"))
+        return suffix
     }
 
     private func nextLayout() {

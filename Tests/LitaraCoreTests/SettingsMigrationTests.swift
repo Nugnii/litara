@@ -5,9 +5,9 @@ import Testing
 @Test func settingsMigrateFromOldIdentifier() throws {
     // B34: при переименовании blalb → Litara настройки, выученные слова и статистика лежат под прежним идентификатором
     // (dev.blalb.app) — переносятся один раз; уже заданное в Litara не перезаписывается
-    let oldName = "litara-test-old-\(UUID().uuidString)", newName = "litara-test-new-\(UUID().uuidString)"
+    let oldName = temporaryDefaultsName("old"), newName = temporaryDefaultsName("new")
     let old = try #require(UserDefaults(suiteName: oldName)), new = try #require(UserDefaults(suiteName: newName))
-    defer { old.removePersistentDomain(forName: oldName); new.removePersistentDomain(forName: newName) }
+    defer { removeTemporaryDefaults(oldName, newName) }
     old.set(["запасик", "гітхаб"], forKey: "learnedWords")
     old.set("be", forKey: "interfaceLanguage")
     old.set(true, forKey: "logDecisions")

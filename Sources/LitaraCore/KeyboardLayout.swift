@@ -11,27 +11,24 @@ public struct KeyboardLayout: Sendable {
     public let language: Language
     /// Название раскладки в macOS, на языке системы («Русская – ПК»).
     public let name: String
-    /// Нажатие (с Shift и Option) → символ. Мёртвые клавиши (апостроф в «США международная – ПК») — в `deadKeys`.
-    public let chars: [Keystroke: String]
+    /// Нажатие (с Shift и Option) → символ на клавиатуре, которая сейчас печатает (`keyboardType`).
+    /// Мёртвые клавиши (апостроф в «США международная – ПК») — в `deadKeys`.
+    public var chars: [Keystroke: String] { table.chars }
     /// Мёртвая клавиша → следующее нажатие → что выйдет на экран («"» и «n» — «"n», «"» и «a» — «ä»).
-    public let deadKeys: [Keystroke: [Keystroke: String]]
+    public var deadKeys: [Keystroke: [Keystroke: String]] { table.dead }
     /// Что выходит мёртвой клавишей с соседом → эти два нажатия (самые простые) — для обратного перевода.
-    private let deadSequences: [String: [Keystroke]]
+    private var deadSequences: [String: [Keystroke]] { table.deadSequences }
+    /// Таблицы по типам клавиатуры (R18, B44, B45): знаки клавиш зависят от типа — «Русская – ПК», клавиша 50: «ё» на
+    /// ANSI, «]» на ISO; у JIS свои и у английских раскладок, и разные у разных типов JIS. Прежде таблица была одна, под
+    /// клавиатуру, которой печатали последней до запуска (`LMGetKbdType`).
+    let tables: KeyTables
+    var table: KeyTable { tables(Self.keyboardType) }
 
-    init(id: String, language: Language, name: String, chars: [Keystroke: String], deadKeys: [Keystroke: [Keystroke: String]] = [:]) {
+    init(id: String, language: Language, name: String, tables: KeyTables) {
         self.id = id
         self.language = language
         self.name = name
-        self.chars = chars
-        self.deadKeys = deadKeys
-        var sequences: [String: [Keystroke]] = [:]
-        for (dead, next) in deadKeys {
-            for (key, text) in next where !key.onKeypad
-                && sequences[text].map({ $0[0].effort + $0[1].effort > dead.effort + key.effort }) ?? true {
-                sequences[text] = [dead, key]
-            }
-        }
-        deadSequences = sequences
+        self.tables = tables
     }
 
     /// Все раскладки системы для языков из `Language`, включая не добавленные пользователем.
@@ -49,8 +46,9 @@ public struct KeyboardLayout: Sendable {
                   let data: CFData = property(source, kTISPropertyUnicodeKeyLayoutData)
             else { return nil }
             let name: String = property(source, kTISPropertyLocalizedName) ?? id
-            let map = keyMap(data as Data)
-            return KeyboardLayout(id: id, language: language, name: name, chars: map.chars, deadKeys: map.dead)
+            let bytes = data as Data
+            return KeyboardLayout(id: id, language: language, name: name,
+                                  tables: KeyTables { type in let map = keyMap(bytes, keyboardType: type); return KeyTable(chars: map.chars, dead: map.dead) })
         }
     }
 
@@ -60,7 +58,7 @@ public struct KeyboardLayout: Sendable {
     }
 
     // ponytail: коды 0...50 — основной блок букв и знаков (ANSI и ISO) — и цифровой блок; F-клавиши не нужны
-    private static func keyMap(_ data: Data) -> (chars: [Keystroke: String], dead: [Keystroke: [Keystroke: String]]) {
+    private static func keyMap(_ data: Data, keyboardType: UInt32) -> (chars: [Keystroke: String], dead: [Keystroke: [Keystroke: String]]) {
         data.withUnsafeBytes { raw in
             guard let layout = raw.bindMemory(to: UCKeyboardLayout.self).baseAddress else { return ([:], [:]) }
             let keys = (Array(UInt16(0)...50) + Keystroke.keypadCodes.sorted()).flatMap { code in
@@ -72,7 +70,7 @@ public struct KeyboardLayout: Sendable {
                 var buffer = [UniChar](repeating: 0, count: 4)
                 let modifiers = UInt32(key.shift ? shiftKey >> 8 : 0) | UInt32(key.option ? optionKey >> 8 : 0)
                 let status = UCKeyTranslate(layout, key.code, UInt16(kUCKeyActionDown), modifiers,
-                                            UInt32(LMGetKbdType()), 0, &state, buffer.count, &length, &buffer)
+                                            keyboardType, 0, &state, buffer.count, &length, &buffer)
                 return status == noErr && length > 0 ? String(utf16CodeUnits: buffer, count: length) : nil
             }
             var map: [Keystroke: String] = [:]
@@ -127,11 +125,20 @@ public struct KeyboardLayout: Sendable {
         return true
     }
 
-    /// Код клавиши слева от «1» на клавиатуре, которой сейчас набирают: ISO — 10 (§), ANSI — 50 (`). «ё» в «Русской – ПК»
-    /// стоит на обеих, и при переводе текста берётся эта (владелец 2026-11-06: «ё» набирает клавишей слева от «1»;
-    /// внешняя и встроенная клавиатуры бывают разного типа — перехват ставит тип по каждому нажатию, B25).
+    /// Тип клавиатуры, которая сейчас печатает (`CGEventField.keyboardEventKeyboardType`): перехват ставит его по каждому
+    /// нажатию до сеанса (B25) — внешняя и встроенная клавиатуры бывают разного типа. По нему `chars` берёт таблицу (R18).
+    /// До первого нажатия — первый тип ISO, а не `LMGetKbdType`: тесты не зависят от того, чем печатали последним.
     /// ponytail: общий на процесс — пишет перехват, читает сеанс набора, оба на главном потоке
-    nonisolated(unsafe) public static var leftOfOneKey: UInt16 = 10
+    nonisolated(unsafe) public static var keyboardType = firstType(kKeyboardISO)
+
+    /// Первый тип клавиатуры macOS этого вида (`KBGetLayoutType`: ANSI, ISO, JIS).
+    static func firstType(_ kind: Int) -> UInt32 {
+        UInt32((1...255).first { KBGetLayoutType(Int16($0)) == kind } ?? 0)
+    }
+
+    /// Код клавиши слева от «1» на клавиатуре, которой сейчас набирают: ISO — 10 (§), ANSI — 50 (`). «ё» в «Русской – ПК»
+    /// стоит на обеих, и при переводе текста берётся эта (владелец 2026-11-06: «ё» набирает клавишей слева от «1»).
+    public static var leftOfOneKey: UInt16 { leftOfOne(forKeyboardType: Int64(keyboardType)) }
 
     /// Клавиша слева от «1» по типу клавиатуры нажатия (`CGEventField.keyboardEventKeyboardType`).
     public static func leftOfOne(forKeyboardType type: Int64) -> UInt16 {
@@ -188,18 +195,59 @@ public struct KeyboardLayout: Sendable {
     /// (docs/spec.md). У Apple в белорусской «?», «,» и «.» не на тех клавишах; Litara печатает знаки ПК, и
     /// сеанс должен знать именно их — иначе ⌥ переводил «.» в белорусскую «/» (проба владельца 2026-10-21).
     public func withPunctuation(of other: KeyboardLayout) -> KeyboardLayout {
-        var chars = self.chars
-        for (key, text) in self.chars where !key.option && !key.onKeypad {
-            guard let otherText = other.chars[key], otherText != text,
-                  !text.contains(where: \.isLetter), !otherText.contains(where: \.isLetter) else { continue }
-            chars[key] = otherText
-        }
-        return KeyboardLayout(id: id, language: language, name: name, chars: chars, deadKeys: deadKeys)
+        // под каждый тип клавиатуры — свои знаки обеих раскладок (R18)
+        KeyboardLayout(id: id, language: language, name: name, tables: KeyTables { [tables, other] type in
+            let mine = tables(type), theirs = other.tables(type)
+            var chars = mine.chars
+            for (key, text) in mine.chars where !key.option && !key.onKeypad {
+                guard let otherText = theirs.chars[key], otherText != text,
+                      !text.contains(where: \.isLetter), !otherText.contains(where: \.isLetter) else { continue }
+                chars[key] = otherText
+            }
+            return KeyTable(chars: chars, dead: mine.dead)
+        })
     }
 
     /// Текст, набранный в раскладке `source`, — каким он вышел бы в этой раскладке.
     public func converting(_ text: String, from source: KeyboardLayout) -> String? {
         source.keystrokes(for: text).map(self.text(for:))
+    }
+}
+
+/// Таблица раскладки под один тип клавиатуры.
+struct KeyTable: Sendable {
+    let chars: [Keystroke: String]
+    let dead: [Keystroke: [Keystroke: String]]
+    /// Что выходит мёртвой клавишей с соседом → эти два нажатия (самые простые).
+    let deadSequences: [String: [Keystroke]]
+
+    init(chars: [Keystroke: String], dead: [Keystroke: [Keystroke: String]]) {
+        self.chars = chars
+        self.dead = dead
+        var sequences: [String: [Keystroke]] = [:]
+        for (key, next) in dead {
+            for (second, text) in next where !second.onKeypad
+                && sequences[text].map({ $0[0].effort + $0[1].effort > key.effort + second.effort }) ?? true {
+                sequences[text] = [key, second]
+            }
+        }
+        deadSequences = sequences
+    }
+}
+
+/// Таблицы раскладки по типам клавиатуры: таблица строится при первом нажатии с клавиатуры этого типа и запоминается.
+/// ponytail: кэш без замка — читают и пишут только с главного потока, как `KeyboardLayout.keyboardType`
+final class KeyTables: @unchecked Sendable {
+    private let build: (UInt32) -> KeyTable
+    private var cache: [UInt32: KeyTable] = [:]
+
+    init(_ build: @escaping (UInt32) -> KeyTable) { self.build = build }
+
+    func callAsFunction(_ type: UInt32) -> KeyTable {
+        if let table = cache[type] { return table }
+        let table = build(type)
+        cache[type] = table
+        return table
     }
 }
 

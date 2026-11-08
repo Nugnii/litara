@@ -110,9 +110,9 @@ private func occurrences(_ needle: String, in text: String) -> Int {
 /// и «zus», две строки одного слова.
 /// Вид: дефект
 @Test func adversaryRenameR3ExceptionDifferingByCaseIsNotDuplicated() throws {
-    let oldName = "litara-adv-\(UUID().uuidString)", newName = "litara-adv-\(UUID().uuidString)"
+    let oldName = temporaryDefaultsName("old"), newName = temporaryDefaultsName("new")
     let old = try #require(UserDefaults(suiteName: oldName)), new = try #require(UserDefaults(suiteName: newName))
-    defer { old.removePersistentDomain(forName: oldName); new.removePersistentDomain(forName: newName) }
+    defer { removeTemporaryDefaults(oldName, newName) }
     old.set(["GPT"], forKey: "exceptions")
     SettingsMigration.migrate(new, from: oldName)
     new.set(["GPT", "ZUS"], forKey: "exceptions")   // добавил в Litara
@@ -144,9 +144,9 @@ private func occurrences(_ needle: String, in text: String) -> Int {
 /// переезде и добавление прироста, цена: ещё один ключ; (в) не считать вылеты blalb после переезда, цена: правка
 /// crashCount и потеря вылетов blalb за время отката.
 @Test func adversaryRenameR3StatsTypedInBlalbAfterMoveAreCounted() throws {
-    let oldName = "litara-adv-\(UUID().uuidString)", newName = "litara-adv-\(UUID().uuidString)"
+    let oldName = temporaryDefaultsName("old"), newName = temporaryDefaultsName("new")
     let old = try #require(UserDefaults(suiteName: oldName)), new = try #require(UserDefaults(suiteName: newName))
-    defer { old.removePersistentDomain(forName: oldName); new.removePersistentDomain(forName: newName) }
+    defer { removeTemporaryDefaults(oldName, newName) }
     old.set(["words": 1000, "autoSwitches": 100], forKey: "stats")
     SettingsMigration.migrate(new, from: oldName)
     new.set(["words": 1500, "autoSwitches": 150], forKey: "stats")   // набрал в Litara

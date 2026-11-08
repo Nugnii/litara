@@ -12,7 +12,8 @@ enum L10n {
              assignShortcut, pressShortcut, hintTranslit, hotkeys, hotkeysHint,
              welcomeIntro, welcomeAccessNeeded, welcomeAccessOK, welcomeOpenAccess, welcomePunto, welcomePuntoExceptions,
              welcomePuntoHotkeys, welcomeHint, welcomeDone, vocabularyHint, hintToggleAuto, autoSwitchMenu, secureInput, clickSound, showFlags, tabGeneral, tabHotkeys, tabWords, tabApps, disabledApps, disabledAppsHint, addApp, otherApp, statistics, statWords, statAuto, statTypos, statManual, statRollbacks, statCrashes, statSince, statReset, statHint, statVersion,
-             exportLearned, importLearned, importedWords, notWordsFile, supportAuthor, whatsNew, checkForUpdates, autoUpdate
+             exportLearned, importLearned, importedWords, notWordsFile, supportAuthor, whatsNew, checkForUpdates, autoUpdate,
+             sendReport, sendReportHint, sendReportSubject
     }
 
     /// Язык интерфейса: выбранный в настройках, иначе язык системы, иначе английский.
@@ -92,6 +93,15 @@ enum L10n {
                    .be: "~/Library/Logs/Litara/decisions.log — змяшчае набраныя словы; пасля адладкі выключыце і выдаліце.",
                    .uk: "~/Library/Logs/Litara/decisions.log — містить набрані слова; після налагодження вимкніть і видаліть.",
                    .pl: "~/Library/Logs/Litara/decisions.log — zawiera wpisane słowa; po debugowaniu wyłącz i usuń."],
+        .sendReport: [.en: "Send report to developer…", .ru: "Отправить отчёт разработчику…",
+                      .be: "Адправіць справаздачу распрацоўніку…", .uk: "Надіслати звіт розробнику…",
+                      .pl: "Wyślij raport autorowi…"],
+        .sendReportHint: [.en: "Opens an email in your mail app with the decision log attached, if it was recorded. Look at it before sending — it contains typed words. Litara sends nothing by itself.",
+                          .ru: "Откроет письмо в программе почты с журналом решений во вложении, если он записан. Посмотрите его перед отправкой — в нём набранные слова. Сама Litara ничего не отправляет.",
+                          .be: "Адкрые ліст у праграме пошты з журналам рашэнняў ва ўкладанні, калі ён запісаны. Паглядзіце яго перад адпраўкай — у ім набраныя словы. Сама Litara нічога не адпраўляе.",
+                          .uk: "Відкриє лист у поштовій програмі з журналом рішень у вкладенні, якщо його записано. Перегляньте його перед надсиланням — у ньому набрані слова. Сама Litara нічого не надсилає.",
+                          .pl: "Otworzy wiadomość w programie pocztowym z dziennikiem decyzji w załączniku, jeśli był zapisywany. Przejrzyj go przed wysłaniem — zawiera wpisane słowa. Litara sama niczego nie wysyła."],
+        .sendReportSubject: [.en: "report", .ru: "отчёт", .be: "справаздача", .uk: "звіт", .pl: "raport"],
         .importPunto: [.en: "Import from Punto Switcher (%d)", .ru: "Перенести из Punto Switcher (%d)",
                        .be: "Перанесці з Punto Switcher (%d)", .uk: "Перенести з Punto Switcher (%d)",
                        .pl: "Importuj z Punto Switcher (%d)"],
