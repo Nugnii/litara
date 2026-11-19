@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State var exceptions: String
     @State var replaceSystemSwitcher = Settings.replaceSystemSwitcher
     @State private var correctTypos = Settings.correctTypos
+    @State private var skipAbbreviations = Settings.skipAbbreviations
     @State private var rememberRollbacks = Settings.rememberRollbacks
     @State private var clickSound = Settings.clickSound
     @State private var rules = Settings.replacements
@@ -21,6 +22,7 @@ struct SettingsView: View {
     let onLanguagesChange: (Set<Language>) -> Void
     let onAutoDetectChange: (Bool) -> Void
     let onCorrectTyposChange: (Bool) -> Void
+    let onSkipAbbreviationsChange: (Bool) -> Void
     let onReplacementsChange: ([Replacement]) -> Void
     let onHotkeysChange: () -> Void
     let onDisabledAppsChange: ([String]) -> Void
@@ -68,8 +70,13 @@ struct SettingsView: View {
             apps.tabItem { Text(L10n.text(.tabApps, ui)) }.tag("apps")
         }
         .padding(.top, 8)
-        .frame(width: 480, height: 720)
+        .frame(width: 480, height: Self.height)
     }
+
+    /// Высота окна: 760 — «Основные» со строкой про аббревиатуры помещаются на 5 языках (замер снимками 2026-11-19, B52);
+    /// на экране ниже — прежние 720: окно не уходит за край, вкладка прокручивается.
+    /// ponytail: число, а не замер содержимого (R23) — «Слова» и в 760 выше окна на ≈ 17 pt (B50)
+    private static let height: CGFloat = max(720, min(760, (NSScreen.main?.visibleFrame.height ?? 800) - 40))
 
     /// Основные: язык интерфейса, языки, что исправлять, запуск.
     private var general: some View {
@@ -115,6 +122,11 @@ struct SettingsView: View {
                     get: { autoDetect },
                     set: { autoDetect = $0; onAutoDetectChange($0) }
                 ))
+                Toggle(L10n.text(.skipAbbreviations, ui), isOn: Binding(
+                    get: { skipAbbreviations },
+                    set: { skipAbbreviations = $0; onSkipAbbreviationsChange($0) }
+                ))
+                .help(String(format: L10n.text(.skipAbbreviationsHint, ui), fixLabel))
                 Toggle(L10n.text(.correctTypos, ui), isOn: Binding(
                     get: { correctTypos },
                     set: { correctTypos = $0; onCorrectTyposChange($0) }

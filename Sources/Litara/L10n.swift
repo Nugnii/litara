@@ -13,7 +13,7 @@ enum L10n {
              welcomeIntro, welcomeAccessNeeded, welcomeAccessOK, welcomeOpenAccess, welcomePunto, welcomePuntoExceptions,
              welcomePuntoHotkeys, welcomeHint, welcomeDone, vocabularyHint, hintToggleAuto, autoSwitchMenu, secureInput, clickSound, showFlags, tabGeneral, tabHotkeys, tabWords, tabApps, disabledApps, disabledAppsHint, addApp, otherApp, statistics, statWords, statAuto, statTypos, statManual, statRollbacks, statCrashes, statSince, statReset, statHint, statVersion,
              exportLearned, importLearned, importedWords, notWordsFile, supportAuthor, whatsNew, checkForUpdates, autoUpdate,
-             sendReport, sendReportHint, sendReportSubject
+             sendReport, sendReportHint, sendReportSubject, skipAbbreviations, skipAbbreviationsHint
     }
 
     /// Язык интерфейса: выбранный в настройках, иначе язык системы, иначе английский.
@@ -193,6 +193,14 @@ enum L10n {
         .secureInput: [.en: "Secure input (%@) — Litara is not correcting", .ru: "Защищённый ввод (%@) — Litara не правит набор",
                        .be: "Абаронены ўвод (%@) — Litara не правіць набор", .uk: "Захищене введення (%@) — Litara не виправляє набір",
                        .pl: "Bezpieczne wprowadzanie (%@) — Litara nie poprawia pisania"],
+        .skipAbbreviations: [.en: "Don't switch abbreviations automatically", .ru: "Не переключать аббревиатуры автоматически",
+                             .be: "Не пераключаць абрэвіятуры аўтаматычна", .uk: "Не перемикати абревіатури автоматично",
+                             .pl: "Nie przełączaj skrótowców automatycznie"],
+        .skipAbbreviationsHint: [.en: "A word typed all in capitals, two letters or more: DNS, ФЗШ. %@ still fixes it.",
+                                 .ru: "Слово целиком из прописных букв, от двух: DNS, ФЗШ. %@ исправляет его, как обычно.",
+                                 .be: "Слова цалкам з вялікіх літар, ад дзвюх: DNS, ФЗШ. %@ выпраўляе яго, як звычайна.",
+                                 .uk: "Слово повністю з великих літер, від двох: DNS, ФЗШ. %@ виправляє його, як зазвичай.",
+                                 .pl: "Słowo pisane samymi wielkimi literami, od dwóch: DNS, ФЗШ. %@ poprawia je jak zwykle."],
         .clickSound: [.en: "Click on automatic correction", .ru: "Щелчок при автоисправлении", .be: "Пстрычка пры аўтавыпраўленні",
                       .uk: "Клацання при автовиправленні", .pl: "Kliknięcie przy automatycznej poprawce"],
         .showFlags: [.en: "Flags instead of letters", .ru: "Флажки вместо букв", .be: "Сцяжкі замест літар",

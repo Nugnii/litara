@@ -21,6 +21,10 @@ final class KeyboardMonitor {
         get { session.correctTypos }
         set { session.correctTypos = newValue }
     }
+    var skipAbbreviations: Bool {
+        get { session.skipAbbreviations }
+        set { session.skipAbbreviations = newValue }
+    }
     var replacements: [Replacement] = [] { didSet { applyFrontmostApp() } }
     /// «Не исправлять само в этих приложениях» (bundle id).
     var disabledApps: Set<String> = [] { didSet { applyFrontmostApp() } }
@@ -542,7 +546,6 @@ final class KeyboardMonitor {
             note("не спросить: выделение не отдано (AX \(read.rawValue))")
             return false
         }
-        guard range.length > 0 else { return false }
         var role: CFTypeRef?, count: CFTypeRef?, value: CFTypeRef?
         AXUIElementCopyAttributeValue(element, "AXRole" as CFString, &role)
         // длина текста: число знаков (дёшево и в большом поле), иначе сам текст
@@ -550,6 +553,11 @@ final class KeyboardMonitor {
             ? count as? Int
             : AXUIElementCopyAttributeValue(element, "AXValue" as CFString, &value) == .success ? (value as? String)?.utf16.count : nil
         let roleName = role as? String ?? "?"
+        // пустое выделение — тоже в журнал: проба B40 2026-11-08 не показала, видит ли AX подсказку Spotlight
+        guard range.length > 0 else {
+            note("выделения нет: \(range.location)+0 из \(total.map(String.init) ?? "?") (\(roleName))")
+            return false
+        }
         let suffix = roleName != "AXTextArea" && range.location > 0 && range.location + range.length == total
         note("выделение \(range.location)+\(range.length) из \(total.map(String.init) ?? "?") (\(roleName)): "
             + (suffix ? "подсказка приложения — стираю первым" : "не подсказка — не трогаю"))

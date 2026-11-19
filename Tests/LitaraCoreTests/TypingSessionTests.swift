@@ -69,16 +69,16 @@ private func session(_ current: Language) throws -> (TypingSession, [Language: K
 
 @Test @MainActor func cyrillicSwitchRetypesWholeSentence() throws {
     var (s, layouts) = try session(.ru)
-    // «мы» одинаково в обеих раскладках, «синия» — белорусское слово, набранное в русской
-    // на лету на последней букве; стирается только отличающийся хвост «ини»
-    #expect(try type("мы синия ", in: &s, layouts: layouts) == [.replace(deleteCount: 3, text: "інія"), .switchLayout(.be)])
+    // «мы» одинаково в обеих раскладках, «синия» — белорусское слово, набранное в русской: по пробелу (на лету между
+    // кириллицами — только явно чужое начало, B51); стирается только отличающийся хвост «иния»
+    #expect(try type("мы синия ", in: &s, layouts: layouts) == [.replace(deleteCount: 4, text: "інія"), .switchLayout(.be)])
 }
 
 @Test @MainActor func newSentenceIsNotTouched() throws {
     var (s, layouts) = try session(.ru)
-    #expect(try type("мы. синия ", in: &s, layouts: layouts) == [.replace(deleteCount: 3, text: "інія"), .switchLayout(.be)])
+    #expect(try type("мы. синия ", in: &s, layouts: layouts) == [.replace(deleteCount: 4, text: "інія"), .switchLayout(.be)])
     var (s2, _) = try session(.ru)
-    #expect(try type("мы\nсиния ", in: &s2, layouts: layouts) == [.replace(deleteCount: 3, text: "інія"), .switchLayout(.be)])
+    #expect(try type("мы\nсиния ", in: &s2, layouts: layouts) == [.replace(deleteCount: 4, text: "інія"), .switchLayout(.be)])
 }
 
 @Test @MainActor func bracketsAreSeparateSentenceAndRestoreLayout() throws {
@@ -94,7 +94,7 @@ private func session(_ current: Language) throws -> (TypingSession, [Language: K
     _ = try type("мы (синия) ", in: &s, layouts: layouts)
     // скобки — отдельное предложение: их содержимое не переводится, но стирается и печатается как было
     // предложение переводится целиком, но совпадающее начало «мы (сінія) мы с» не стирается
-    #expect(try type("мы синия ", in: &s, layouts: layouts) == [.replace(deleteCount: 3, text: "інія"), .switchLayout(.be)])
+    #expect(try type("мы синия ", in: &s, layouts: layouts) == [.replace(deleteCount: 4, text: "інія"), .switchLayout(.be)])
 }
 
 @Test @MainActor func wordWithDeadKeyIsCorrected() throws {
@@ -499,7 +499,7 @@ private func session(_ current: Language) throws -> (TypingSession, [Language: K
 @Test @MainActor func wholeSentenceStillConvertsWhenNothingIsExclusive() throws {
     // «мы и синия» в русской раскладке — белорусское предложение: «и» → «і» вместе с «сінія»
     var (s, layouts) = try session(.ru)
-    #expect(try type("мы и синия ", in: &s, layouts: layouts) == [.replace(deleteCount: 6, text: "і сінія"), .switchLayout(.be)])
+    #expect(try type("мы и синия ", in: &s, layouts: layouts) == [.replace(deleteCount: 7, text: "і сінія"), .switchLayout(.be)])
 }
 
 @Test @MainActor func userWordsAreKnown() throws {
@@ -903,11 +903,12 @@ private func session(_ current: Language) throws -> (TypingSession, [Language: K
     // В русских словах апострофа не бывает (владелец)
     let (detector, layouts) = try makeDetector(ownerLayoutIDs)
     #expect(!detector.isWord("вс’", in: .be))
-    // после белорусского слова — на лету, третьей клавишей: раскладку решает слово (B24)
+    // после белорусского слова — по пробелу: раскладку решает слово (B24), а на лету между кириллицами исправляется
+    // только явно чужое начало (B51)
     var s = TypingSession(detector: detector, layouts: layouts, current: .be)
     _ = try type("літару ", in: &s, layouts: layouts)
     let actions = try type("вс’ ", in: &s, layouts: layouts)
-    #expect(actions == [.replace(deleteCount: 0, text: "ё"), .switchLayout(.ru)], "\(actions) \(s.lastDecision ?? "")")
+    #expect(actions == [.replace(deleteCount: 1, text: "ё"), .switchLayout(.ru)], "\(actions) \(s.lastDecision ?? "")")
 }
 
 /// Замер перехода из русской фразы в белорусскую (B22) — только по запросу: BLALB_SWITCH_CORPUS — файл «число\tслово»,
@@ -943,3 +944,111 @@ func switchReplay() throws {
 }
 
 
+
+/// Набор фразы клавишами русской раскладки, как их жмёт человек («и» и «і» — одна клавиша: белорусское слово
+/// пишется здесь русскими буквами). Возвращает текст на экране, раскладку после фразы и журнал решений.
+@MainActor
+private func onScreen(_ input: String, from start: Language, detector: LanguageDetector,
+                      layouts: [Language: KeyboardLayout]) throws -> (text: String, language: Language, log: [String]) {
+    var s = TypingSession(detector: detector, layouts: layouts, current: start)
+    var screen = "", log: [String] = []
+    func apply(_ actions: [TypingSession.Action]) {
+        for case let .replace(n, text) in actions { screen = String(screen.dropLast(n)) + text }
+    }
+    for ch in input {
+        if ch == " " {
+            apply(s.separator(" "))
+            screen += " "
+            if let decision = s.lastDecision { log.append(decision) }
+        } else {
+            let key = try #require(layouts[.ru]?.keystrokes(for: String(ch))?.first, "\(ch)")
+            let before = s.current
+            let actions = s.key(key)
+            if actions.isEmpty { screen += layouts[before]?.chars[key] ?? "" } else { apply(actions); log.append(s.lastDecision ?? "") }
+        }
+    }
+    return (screen, s.current, log)
+}
+
+@Test @MainActor func ownSpellingStaysInRussianSentence() throws {
+    // B51, условный уход (docs/spec.md, выбор 2026-11-19): русское слово вне словаря с белорусским двойником уводило
+    // раскладку — «беларуских» → «беларускіх» (журнал решений 2026-11-19T08:27:28Z). Уход по одному слову условный:
+    // следующее слово, которое тянет обратно, отменяет его и возвращает написанное
+    let (detector, layouts) = try makeDetector(ownerLayoutIDs, pcPunctuation: true)
+    func screen(_ input: String) throws -> (text: String, language: Language, log: [String]) {
+        try onScreen(input, from: .ru, detector: detector, layouts: layouts)
+    }
+    // фразы владельца 2026-11-19: слово остаётся как набрано, раскладка — русская
+    for phrase in ["употреблением беларуских слов в русском ", "сейчас беларуских переключил зачем ",
+                   "до выкатки но я не помню логин "] {
+        let r = try screen(phrase)
+        #expect(r.text == phrase && r.language == .ru, "\(r.text) \(r.log)")
+    }
+    // уход виден в журнале: условный и неподтверждённый
+    let log = try screen("употреблением беларуских слов ").log
+    #expect(log.contains("«беларуских» [ru] → «беларускіх» [be] — условно"), "\(log)")
+    #expect(log.contains("«слов» [be] → «слов» [ru] — уход не подтвердился"), "\(log)")
+    // отмена возвращает и начало предложения, переведённое вместе с уходом («и» → «і» → «и»)
+    #expect(try screen("и беларуских слов ").text == "и беларуских слов ")
+    // на лету между кириллицами — только явно чужое: «выкатки» при наборе не трогается
+    #expect(try screen("выкатки").text == "выкатки")
+}
+
+@Test @MainActor func belarusianWordsStillSwitchFromRussianSentence() throws {
+    // примеры владельца 2026-11-06 (B24) держатся и при условном уходе (B51): конец фразы уход не отменяет, второе
+    // белорусское слово его подтверждает, явно чужое слово («ў») уходит сразу
+    let (detector, layouts) = try makeDetector(ownerLayoutIDs, pcPunctuation: true)
+    func screen(_ input: String) throws -> (text: String, language: Language, log: [String]) {
+        try onScreen(input, from: .ru, detector: detector, layouts: layouts)
+    }
+    for (typed, shown) in [("привет прывитанне ", "привет прывітанне "), ("если взять нацисни литару ", "если взять націсні літару "),
+                           ("отлично выдатна ", "отлично выдатна "), ("Добрай раницы ", "Добрай раніцы "),
+                           ("я зразумещ ", "я зразумеў ")] {
+        let r = try screen(typed)
+        #expect(r.text == shown && r.language == .be, "\(typed): \(r.text) \(r.log)")
+    }
+    // явно чужое — без условия: следующее русское слово возвращает раскладку, но слово с «ў» не переписывает
+    #expect(try screen("я зразумещ слов ").text == "я зразумеў слов ")
+    // подтверждённый уход не отменяется: после двух белорусских слов русское возвращает раскладку, а их не трогает
+    let confirmed = try screen("если взять нацисни литару потом ")
+    #expect(confirmed.text == "если взять націсні літару потом " && confirmed.language == .ru, "\(confirmed.log)")
+    // прошлое предложение отмена не переписывает: возвращается только раскладка
+    let next = try screen("привет прывитанне. как дела ")
+    #expect(next.text == "привет прывітанне. как дела " && next.language == .ru, "\(next.log)")
+    // цена выбора (docs/spec.md): одно белорусское слово посреди русской фразы перед явно русским остаётся с «и»
+    #expect(try screen("он сказал здрадник потом ушёл ").text == "он сказал здрадник потом ушёл ")
+}
+
+@Test @MainActor func abbreviationsAreLeftAloneWhenAsked() throws {
+    // B52 (docs/spec.md, 2026-11-19): настройка, которая оставляет аббревиатуры как набраны. Аббревиатура — слово целиком
+    // из прописных, от двух букв. По умолчанию выключено: «ФЗШ» → «API» (журнал владельца — 37 верных правок из 42)
+    let (detector, layouts) = try makeDetector(ownerLayoutIDs, pcPunctuation: true)
+    func screen(_ input: String, skip: Bool) throws -> (text: String, language: Language, decision: String?) {
+        var s = TypingSession(detector: detector, layouts: layouts, current: .ru)
+        s.skipAbbreviations = skip
+        var text = ""
+        for ch in input {
+            let before = s.current
+            let actions = ch == " " ? s.separator(" ") : s.key(try #require(layouts[.ru]?.keystrokes(for: String(ch))?.first, "\(ch)"))
+            for case let .replace(n, t) in actions { text = String(text.dropLast(n)) + t }
+            if ch == " " { text += " " } else if actions.isEmpty { text += layouts[before]?.chars[try #require(layouts[.ru]?.keystrokes(for: String(ch))?.first)] ?? "" }
+        }
+        return (text, s.current, s.lastDecision)
+    }
+    // выключено — как прежде
+    #expect(try screen("ФЗШ ", skip: false).text == "API ")
+    // включено — прописные не трогаются ни на лету, ни по пробелу; раскладка остаётся
+    for word in ["ФЗШ ", "ГЫВ ", "ТЗ ", "ЗДТ "] {
+        let r = try screen(word, skip: true)
+        #expect(r.text == word && r.language == .ru, "\(word): \(r.text)")
+        #expect(r.decision?.hasSuffix("аббревиатура") == true, "\(r.decision ?? "")")
+    }
+    // обычные слова и слово с одной заглавной исправляются, как прежде
+    #expect(try screen("руддщ ", skip: true).text == "hello ")
+    #expect(try screen("Руддщ ", skip: true).text == "Hello ")
+    // хоткей на аббревиатуре работает
+    var s = TypingSession(detector: detector, layouts: layouts, current: .ru)
+    s.skipAbbreviations = true
+    _ = try type("ФЗШ ", in: &s, layouts: layouts)
+    #expect(!s.cycleWord().isEmpty)
+}

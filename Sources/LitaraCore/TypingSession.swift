@@ -48,9 +48,15 @@ public struct TypingSession {
         var hyphen = false
         /// Своя замена: на экране этот текст вместо набранного — первое ⌥ возвращает набранное.
         var replaced: String?
+        /// Аббревиатура, оставленная как набрана (B52): перевод предложения в другую кириллицу её не трогает.
+        var kept = false
     }
 
-    public private(set) var current: Language
+    public private(set) var current: Language {
+        // вернулись туда, откуда уходили условно, — условного ухода больше нет. Латиница его не снимает: английское
+        // слово между уходом и отменой ничего не решает («беларуских API слов», скептик 2026-11-19)
+        didSet { if tentative?.from == current { tentative = nil } }
+    }
     /// Последнее решение строкой — для журнала отладки (настройка «Записывать решения»).
     public private(set) var lastDecision: String?
     /// Последний ⌥ вернул автоисправленное слово к набранному — набранное (строчными). Три таких
@@ -67,6 +73,9 @@ public struct TypingSession {
     public var autoCorrect = true
     /// «Исправлять опечатки» (настройка, docs/spec.md): ru и be, только однозначные случаи.
     public var correctTypos = false
+    /// «Не переключать аббревиатуры автоматически» (настройка, docs/spec.md, B52): слово целиком из прописных, от двух
+    /// букв, само не исправляется — ни на лету, ни по пробелу; хоткей и свои замены работают.
+    public var skipAbbreviations = false
     /// Исключения (настройка): слова, которые не исправляются никогда — ZUS, GPT, /save.
     /// Сравнение без регистра; пока слово может стать исключением, на лету оно не трогается.
     public var exceptions: Set<String> = [] {
@@ -117,6 +126,13 @@ public struct TypingSession {
     /// (`textLanguage`, R4); переход между кириллицами он не держит — раскладку решает слово (B24). Ручная
     /// смена раскладки его стирает.
     private var sureLanguage: Language?
+    /// Условный уход между кириллицами (docs/spec.md, выбор владельца 2026-11-19, B51): откуда ушли и с какого слова
+    /// предложения уход перевёл текст. Слово только нового языка уход подтверждает (`nil`); слово, которое тянет
+    /// обратно, отменяет: всё с `start` печатается как было. Конец предложения и сброс оставляют одну раскладку
+    /// (переписывать уже нечего); ручная смена раскладки и хоткей, вернувший её, уход снимают.
+    /// `word` — нажатия слова, по которому ушли: оно же, открытое ⌫ и законченное снова, уход не подтверждает.
+    /// `to` — куда ушли: отмена возвращает слова этой раскладки, даже если между ними набрано латинское.
+    private var tentative: (from: Language, to: Language, start: Int, word: [Keystroke])?
     /// Выделенный текст в круге хоткея: слово — нажатиями и своей раскладкой, пробелы и то, чего не
     /// набрать (эмодзи), — как есть. В круге `nil` — текст как был выделен. Любое нажатие круг сбрасывает.
     private enum Piece { case keys([Keystroke], Language), raw(String) }
@@ -162,11 +178,26 @@ public struct TypingSession {
               // буква «х» русской: скобка — только если остаётся скобкой и после перевода
               !(Self.openers.contains(first) && layouts[target]?.text(for: keys).first == first)
         else { return [] }
+        // аббревиатура сама не исправляется (B52) — кроме отмены условного ухода: её буквы испортил сам уход («ІНН»)
+        if skipAbbreviations, isAbbreviation(keys), !cancels(target) { return [] }
+        // между кириллицами на лету — только явно чужое начало слова и отмена условного ухода (B51): начало русского
+        // слова вне словаря («выкатки», «паги») уводило раскладку; остальное решает пробел
+        var rollback: (start: Int, of: Language)?
+        if let tentative, tentative.from == target {
+            rollback = (tentative.start, tentative.to)
+        } else if current.isCyrillic, target.isCyrillic {
+            if detector.clearlyForeign(keys, typedIn: current, to: target, whole: false) {
+                tentative = nil
+            } else {
+                return []
+            }
+        }
         let onScreen = layouts[current]?.text(for: Array(keys.dropLast())) ?? ""
         let tail = layouts[target]?.text(for: keys) ?? ""
         lastDecision = "на лету: «\(typed)» [\(current.rawValue)] → «\(tail)» [\(target.rawValue)]"
+            + (rollback != nil ? " — уход не подтвердился" : "")
         stats.autoSwitches += 1
-        return retype(target: target, typed: onScreen, tail: tail)
+        return retype(target: target, typed: onScreen, tail: tail, from: rollback?.start, rollback: rollback?.of)
     }
 
     public mutating func backspace() {
@@ -177,10 +208,18 @@ public struct TypingSession {
             if keys.isEmpty, let typed = reopenedTypo { erasedTypo = typed; reopenedTypo = nil }
             return
         }
+        // стёрт один из нескольких разделителей после слова — слово остаётся законченным
+        if let token = last, token.separator.count > 1 {
+            last?.separator.removeLast()
+            if let i = sentence.indices.last, sentence[i].keys == token.keys { sentence[i].separator.removeLast() }
+            return
+        }
         // стёрт разделитель после слова — слово снова недописанное: его берут хоткей и пробел (проба
         // владельца 2026-10-21: после ⌫ хоткей предыдущее слово не менял).
         // ponytail: стирание дальше начала этого слова не отслеживается — сеанс начинается заново
-        guard let token = last, token.language == current, !token.frozen else { reset(); return }
+        // после своей замены на экране её текст, а не набранное: открытое заново слово печатало замену дважды
+        // («мск ⌫ » → «МосМосква», скептик 2026-11-19)
+        guard let token = last, token.language == current, !token.frozen, token.replaced == nil else { reset(); return }
         if let i = sentence.indices.last, sentence[i].keys == token.keys { sentence.removeLast() }
         if text(of: token).contains(where: \.isLetter) { stats.words -= 1 }  // пробел посчитает его снова
         keys = token.keys
@@ -196,6 +235,7 @@ public struct TypingSession {
         erasedTypo = nil
         keys = []
         sentence = []
+        tentative?.start = 0    // курсор потерян: отмена условного ухода вернёт раскладку, текст не перепишет
         outer = []
         last = nil
         cycle = nil
@@ -209,6 +249,7 @@ public struct TypingSession {
 
     /// Пользователь сам переключил раскладку.
     public mutating func layoutChanged(to language: Language) {
+        tentative = nil
         current = language
         sureLanguage = nil
         reset()
@@ -222,7 +263,13 @@ public struct TypingSession {
         selection = nil
         // пробел без слова (после ⌥, второй подряд) решения не принимает — журнал не повторяет прошлое
         lastDecision = nil
-        guard !keys.isEmpty else { return [] }
+        guard !keys.isEmpty else {
+            // второй разделитель подряд (двойной пробел, Tab) на экране есть — дописывается к прошлому слову: правка
+            // предложения считала стирание без него и портила текст («беларускіих», скептик 2026-11-19)
+            if let i = sentence.indices.last, last == nil || last?.keys == sentence[i].keys { sentence[i].separator += separator }
+            last?.separator += separator
+            return []
+        }
         var token = Token(keys: keys, language: current, separator: separator, typedIn: wordTypedIn ?? current)
         // стёр исправленную опечатку и набрал то же (или поправил её обратно в набранное) — отказ, как ⌥: остаётся как
         // набрано, третий — в «Мои слова» (B27)
@@ -276,6 +323,7 @@ public struct TypingSession {
             sentence.removeLast(phraseWords)
         }
         token.replaced = replacement
+        let abbreviation = skipAbbreviations && replacement == nil && isAbbreviation(token.keys)
         let mayCorrect = replacement == nil && autoCorrect && typedCleanly && !isException && !wordDecided
         // слово вне словарей — по невозможной тройке букв, где словарь молчит (выбор владельца 2026-11-08)
         var target = mayCorrect ? (detector.correction(for: token.keys, typedIn: current)
@@ -285,10 +333,31 @@ public struct TypingSession {
         // пишется в любой раскладке. Запрет B20/B22 «из русской фразы — только явно белорусское» снят.
         // ponytail: русское слово вне словаря («запасик» → «запасік») уходит в белорусскую — цена, выбранная владельцем
         // по замеру; держит откат ⌥ (третий кладёт слово в «Мои слова», R6), лечится полнее русским словарём
+        // аббревиатура сама не исправляется (B52) — кроме отмены условного ухода: её буквы испортил сам уход («ІНН»).
+        // Запрет по выбору пользователя, по умолчанию выключен; обе стороны — тест `abbreviationsAreLeftAloneWhenAsked`
+        // (что останавливает: «ФЗШ», «ТЗ»; что пропускает: «руддщ», «Руддщ»), цена по журналу владельца — 37 верных из 42
+        if abbreviation, !(target.map(cancels) ?? false) { target = nil }
+        token.kept = abbreviation && target == nil
         if let target { token.language = target }
+        // уход между кириллицами по одному слову — условный (docs/spec.md, выбор владельца 2026-11-19, B51): русское
+        // слово вне словаря с белорусским двойником («беларуских» — «беларускіх») от белорусского не отличить
+        var rollback: (start: Int, of: Language)?   // слово тянет обратно — уход отменяется с этого слова предложения
+        var conditional = false     // сам этот уход условный: слово не явно чужое
+        if let target, let pending = tentative, pending.from == target {
+            rollback = (pending.start, pending.to)
+        } else if let target, current.isCyrillic, target.isCyrillic {
+            conditional = !detector.clearlyForeign(token.keys, typedIn: current, to: target, whole: true)
+        } else if target == nil, replacement == nil, let pending = tentative, current == pending.to,
+                  // само слово ухода, открытое ⌫ и законченное снова (хоть и с запятой), себя не подтверждает
+                  LanguageDetector.core(typedText) != LanguageDetector.core(layouts[current]?.text(for: pending.word) ?? ""),
+                  LanguageDetector.core(typedText).filter(\.isLetter).count >= 2,
+                  detector.isWordOnly(token.keys, in: current, not: pending.from) {
+            tentative = nil         // слово только нового языка — уход подтверждён
+        }
         // опечатка (docs/spec.md): раскладка верна, а слова нет ни в одном словаре, и ровно одна правка
         // даёт словарное слово. Меняется только само слово; первое ⌥ возвращает набранное
-        let mayFix = replacement == nil && target == nil && correctTypos && autoCorrect && typedCleanly && !isException && !wordDecided
+        let mayFix = replacement == nil && target == nil && correctTypos && autoCorrect && typedCleanly && !isException
+            && !wordDecided && !abbreviation
         var typoFix: String?
         if mayFix, let fixed = detector.typoCorrection(for: token.keys, typedIn: current),
            let fixedKeys = layouts[current]?.keystrokes(for: fixed) {
@@ -297,9 +366,11 @@ public struct TypingSession {
             typoFix = fixed
         }
         let shown = text(of: token)
-        if let first = shown.first, Self.openers.contains(first) {
+        let opens = shown.first.map(Self.openers.contains) == true
+        if opens, rollback == nil {
             outer.append((sentence, current))
             sentence = []
+            tentative?.start = 0    // скобка — отдельное предложение: текст перед ней отмена уже не переписывает
         }
         // дефис с частицей: «кто то» → «кто-то» — предыдущее слово сразу перед этим, через пробел
         if mayFix, typoFix == nil, let i = sentence.indices.last, sentence[i].separator == " ", !sentence[i].frozen,
@@ -313,12 +384,28 @@ public struct TypingSession {
         if target != nil || ellipsis { stats.autoSwitches += 1 }
         if typoFix != nil || token.hyphen { stats.typoFixes += 1 }
         if refused { lastRollback = typedText.lowercased(); stats.rollbacks += 1 }
-        lastDecision = "«\(typedPhrase)» [\(current.rawValue)] → " + (replacement.map { "«\($0)» (\(ellipsis ? "троеточие" : "замена"))" } ?? target.map { "«\(shown)» [\($0.rawValue)]" }
-            ?? typoFix.map { "«\($0)» (опечатка)" } ?? (token.hyphen ? "через дефис" : isException ? "исключение" : refused ? "отказ: исправление стёрто, набрано снова" : "без изменений"))
+        lastDecision = "«\(typedPhrase)» [\(current.rawValue)] → " + (replacement.map { "«\($0)» (\(ellipsis ? "троеточие" : "замена"))" }
+            ?? target.map { "«\(shown)» [\($0.rawValue)]" + (rollback != nil ? " — уход не подтвердился" : conditional ? " — условно" : "") }
+            ?? typoFix.map { "«\($0)» (опечатка)" } ?? (token.hyphen ? "через дефис" : isException ? "исключение" : abbreviation ? "аббревиатура" : refused ? "отказ: исправление стёрто, набрано снова" : "без изменений"))
         if let replacement {
             actions = Self.edit(from: typedPhrase, to: replacement)
         } else if let target {
-            actions = retype(target: target, typed: layouts[current]?.text(for: token.keys) ?? "", tail: shown)
+            let from = current
+            let start = min(rollback?.start ?? sentenceStart(for: target), sentence.count)
+            actions = retype(target: target, typed: layouts[current]?.text(for: token.keys) ?? "", tail: shown, from: start,
+                             rollback: rollback?.of)
+            // латинское слово условный уход не снимает и не начинает: он ждёт слова одной из двух кириллиц
+            if conditional {
+                tentative = (from, target, start, token.keys)
+            } else if (from.isCyrillic && target.isCyrillic) || rollback != nil {
+                tentative = nil
+            }
+            // отмена словом со скобкой: внешнее предложение уже возвращено, теперь скобка его откладывает — с раскладкой
+            // после отмены, а не условной
+            if opens, rollback != nil {
+                outer.append((sentence, current))
+                sentence = []
+            }
         } else if let typoFix {
             actions = Self.edit(from: typedText, to: typoFix)
         } else if token.hyphen {
@@ -348,6 +435,9 @@ public struct TypingSession {
 
         if let last = shown.last, Self.closers.contains(last), let saved = outer.popLast() {
             sentence = saved.sentence + sentence.map { var t = $0; t.frozen = true; return t }
+            // слова в скобках заморожены, а что было в скобках до конца предложения, сеанс не помнит — отмена
+            // условного ухода после скобки возвращает только раскладку (возврат текста портил «(п. 3)», скептик 2026-11-19)
+            tentative?.start = sentence.count
             if saved.language != current {
                 actions.append(.switchLayout(saved.language))
                 current = saved.language
@@ -613,7 +703,38 @@ public struct TypingSession {
     /// Исправление в `target`: предложение (или однобуквенные перед словом) и слово — `typed` его
     /// уже на экране — печатаются в `target`; стирается только отличающийся хвост. Раскладка
     /// переключается всегда, даже когда текст не изменился (en ↔ pl).
-    private mutating func retype(target: Language, typed: String, tail: String) -> [Action] {
+    /// `from` — с какого слова (отмена условного ухода, B51); без него — `sentenceStart`.
+    /// `rollback` — отмена условного ухода, раскладка, в которую уходили: возвращаются её слова (и аббревиатура,
+    /// набранная во время ухода, — её буквы от него), латинское слово между ними остаётся.
+    private mutating func retype(target: Language, typed: String, tail: String, from explicit: Int? = nil,
+                                 rollback: Language? = nil) -> [Action] {
+        // отмена словом, набранным в латинице, переводит и однобуквенные перед ним, как любое исправление из латиницы
+        // («1/ ghbdtn» → «1. привет»)
+        let own = rollback != nil && current.isCyrillic ? sentence.count : sentenceStart(for: target)
+        let start = min(explicit.map { rollback != nil ? min($0, own) : $0 } ?? own, sentence.count)
+        let old = sentence[start...].map { text(of: $0) + $0.separator }.joined() + typed
+        for i in start..<sentence.count where !sentence[i].frozen {
+            let token = sentence[i]
+            if let rollback {
+                if token.language == rollback || (i >= own && token.language == current) { sentence[i].language = target }
+            } else if token.language == current, !token.kept {
+                sentence[i].language = target
+            }
+        }
+        let new = sentence[start...].map { text(of: $0) + $0.separator }.joined() + tail
+        // отмена внутри скобок: после закрывающей раскладка вернётся не в условную, а в ту, откуда уходили
+        if let rollback { for i in outer.indices where outer[i].language == rollback { outer[i].language = target } }
+        current = target
+        return Self.edit(from: old, to: new) + [.switchLayout(target)]
+    }
+
+    /// Исправление в `target` отменяет условный уход: возвращает туда, откуда ушли, слово, набранное в раскладке ухода.
+    private func cancels(_ target: Language) -> Bool {
+        tentative.map { $0.from == target && $0.to == current } ?? false
+    }
+
+    /// С какого слова предложения исправление в `target` переводит текст.
+    private func sentenceStart(for target: Language) -> Int {
         var start = sentence.count
         if target.isCyrillic == current.isCyrillic {
             // всё предложение; переводятся слова в текущей раскладке, остальное печатается как было.
@@ -628,13 +749,7 @@ public struct TypingSession {
                   LanguageDetector.core(text(of: sentence[start - 1])).count == 1,
                   !detector.isWord(text(of: sentence[start - 1]), in: current) { start -= 1 }
         }
-        let old = sentence[start...].map { text(of: $0) + $0.separator }.joined() + typed
-        for i in start..<sentence.count where sentence[i].language == current && !sentence[i].frozen {
-            sentence[i].language = target
-        }
-        let new = sentence[start...].map { text(of: $0) + $0.separator }.joined() + tail
-        current = target
-        return Self.edit(from: old, to: new) + [.switchLayout(target)]
+        return start
     }
 
     /// Язык текста: последнего слова, которое бывает только в одной кириллице, иначе последнего кириллического
@@ -665,6 +780,17 @@ public struct TypingSession {
             ? language : nil
     }
 
+    /// Аббревиатура (docs/spec.md, B52, определение владельца 2026-11-19): слово целиком из прописных, от двух букв —
+    /// в текущей раскладке либо, если там на этих клавишах знаки («:"» — «ЖЭ»), в любой другой; строчных нет.
+    private func isAbbreviation(_ keys: [Keystroke]) -> Bool {
+        func capitals(_ text: String) -> Bool {
+            let letters = LanguageDetector.core(text).filter(\.isLetter)
+            return letters.count >= 2 && letters.allSatisfy(\.isUppercase)
+        }
+        guard let typed = layouts[current]?.text(for: keys), !typed.contains(where: \.isLowercase) else { return false }
+        return capitals(typed) || layouts.values.contains { capitals($0.text(for: keys)) }
+    }
+
     private func hasWordOnlyIn(_ language: Language, not other: Language) -> Bool {
         sentence.contains { token in
             guard token.language == language, !token.frozen, let otherLayout = layouts[other] else { return false }
@@ -675,6 +801,10 @@ public struct TypingSession {
 
     private mutating func endSentence() {
         sentence = []
+        // конец предложения в скобках: между внешним предложением и курсором текст, которого сеанс не помнит, —
+        // внешнее больше не переписывается, остаётся его раскладка («и (см. ниже) выдатна» давало «(смі ниже)»)
+        outer = outer.map { ([], $0.language) }
+        tentative?.start = 0    // прошлое предложение отмена условного ухода уже не переписывает
     }
 
     private func text(of token: Token) -> String {

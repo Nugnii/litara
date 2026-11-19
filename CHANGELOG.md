@@ -4,6 +4,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-11-19
+
+### Added
+- "Don't switch abbreviations automatically" in General, off by default: a word typed all in capitals, two letters
+  or more ("DNS", "ТЗ"), is left as typed. The fix hotkey still works on it.
+
+### Fixed
+- Two spaces or a Tab after a space no longer garble the text when a sentence is switched between Cyrillic layouts
+  ("и  беларуских" used to become "иі беларускіх"). The same for a sentence end inside brackets ("и (см. ниже)
+  выдатна" used to become "и (смі ниже) выдатна").
+- Backspace over the space after one of your own replacements, then space again, no longer types the replacement
+  twice ("МосМосква").
+
+### Changed
+- The settings window is a little taller (760 points; 720 on low screens) so the General tab fits without scrolling.
+- Switching between Cyrillic layouts on a single word is now tentative. A Russian word that is not in the dictionary
+  but has a Belarusian look-alike ("беларуских" — "беларускіх") used to be rewritten and to switch the layout. Now the
+  next word decides: a word of the new language confirms the switch, a word that pulls back cancels it and restores
+  what you typed. Clearly foreign words (with "ў", an apostrophe or impossible letter combinations) still switch at
+  once. Mid-word fixes between Cyrillic layouts happen only for clearly foreign beginnings.
+- The decision log also notes when the field shows no selected text after the cursor before a fix, so a missed
+  Spotlight suggestion can be told apart from no suggestion.
+
 ## [0.30.0] - 2026-11-08
 
 ### Added

@@ -242,6 +242,30 @@ public struct LanguageDetector: Sendable {
         return candidates.count == 1 ? candidates.first?.value : nil
     }
 
+    /// Набранное явно чужое текущей кириллице (docs/spec.md, «Уход между кириллицами… условный», B51): в нём тройка
+    /// букв или окончание, каких в языке нет, либо «ў» или апостроф в одном из двух вариантов. Такое слово уходит в
+    /// `target` сразу; остальное («беларуских» — «беларускіх») — условно, до подтверждения следующим словом.
+    /// `whole: false` — начало слова на лету: окончания ещё нет, тройка с концом слова не считается.
+    /// Одна буква явной бывает только по «ў» («щ» → «ў»): троек и окончаний у неё нет.
+    public func clearlyForeign(_ keystrokes: [Keystroke], typedIn current: Language, to target: Language,
+                               whole: Bool) -> Bool {
+        guard let typed = layouts[current]?.text(for: keystrokes), let other = layouts[target]?.text(for: keystrokes)
+        else { return false }
+        if (typed + other).contains(where: { "ўЎ'".contains($0) }) { return true }
+        let word = String(Self.core(typed))
+        guard word.filter(\.isLetter).count >= 2 else { return false }
+        let grams = Self.trigrams(of: word).filter { whole || !$0.hasSuffix("$") }
+        if let table = trigrams[current], grams.contains(where: { !table.contains($0) }) { return true }
+        return whole && !endingPossible(word, in: current)
+    }
+
+    /// Слово бывает только в `language`: там оно слово, а те же нажатия в `other` — нет. Подтверждает условный уход.
+    public func isWordOnly(_ keystrokes: [Keystroke], in language: Language, not other: Language) -> Bool {
+        guard let text = layouts[language]?.text(for: keystrokes), let otherText = layouts[other]?.text(for: keystrokes)
+        else { return false }
+        return isWord(text, in: language) && !isWord(otherText, in: other)
+    }
+
     /// Буква набранного осталась буквой в варианте (R13, B26). Знак по краю срезается, чтобы «(привет)» и «"Сл» были
     /// словами, но буква, ставшая знаком, — не рамка: «быкуе» → «,sret», «ютуб» → «.ne,» (владелец 2026-11-06: слово
     /// не содержит спецсимволов; журнал с 2026-10-23 — 12 таких решений, все ложные). Апостроф — буква («вщтэе» →

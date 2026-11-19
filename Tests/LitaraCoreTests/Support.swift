@@ -7,6 +7,10 @@ let defaultLayoutIDs: [Language: String] = [
     .ru: "RussianWin", .be: "Byelorussian", .uk: "Ukrainian-PC", .en: "ABC", .pl: "PolishPro",
 ]
 
+/// Сколько случайных фраз гоняют тесты скептиков (`Adversary*Tests`): 300 — чтобы обычный `swift test` шёл секунды;
+/// полный размер, на котором их писали и принимали починки (2026-11-19), — `LITARA_FUZZ_ROUNDS=3000 swift test`.
+let adversaryFuzzRounds = Int(ProcessInfo.processInfo.environment["LITARA_FUZZ_ROUNDS"] ?? "") ?? 300
+
 /// Набор языков владельца (en — «США международная – ПК», be, ru — «Русская – ПК»).
 let ownerLayoutIDs: [Language: String] = [.en: "USInternational-PC", .be: "Byelorussian", .ru: "RussianWin"]
 

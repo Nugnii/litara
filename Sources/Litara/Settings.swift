@@ -29,6 +29,13 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "correctTypos") }
     }
 
+    /// «Не переключать аббревиатуры автоматически» — по умолчанию выключено (ответ владельца 2026-11-19, B52: по его
+    /// журналу 37 из 42 таких правок верные).
+    static var skipAbbreviations: Bool {
+        get { UserDefaults.standard.bool(forKey: "skipAbbreviations") }
+        set { UserDefaults.standard.set(newValue, forKey: "skipAbbreviations") }
+    }
+
     /// Короткий щелчок при автоисправлении (docs/spec.md: по умолчанию выключен).
     static var clickSound: Bool {
         get { UserDefaults.standard.bool(forKey: "clickSound") }

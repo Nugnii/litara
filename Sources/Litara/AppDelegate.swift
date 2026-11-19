@@ -111,6 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
             return
         }
         monitor.correctTypos = Settings.correctTypos
+        monitor.skipAbbreviations = Settings.skipAbbreviations
         monitor.replacements = Settings.replacements
         monitor.disabledApps = Set(Settings.disabledApps)
         monitor.hotkeys = Settings.hotkeys
@@ -306,6 +307,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
                 onCorrectTyposChange: { [weak self] on in
                     Settings.correctTypos = on
                     self?.monitor?.correctTypos = on
+                },
+                onSkipAbbreviationsChange: { [weak self] on in
+                    Settings.skipAbbreviations = on
+                    self?.monitor?.skipAbbreviations = on
                 },
                 onReplacementsChange: { [weak self] replacements in
                     Settings.replacements = replacements
