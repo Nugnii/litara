@@ -35,7 +35,9 @@ public struct LanguageDetector: Sendable {
         self.filters = filters
         self.prefixes = prefixes
         self.checks = checks
-        self.trigrams = trigrams
+        // тройки слов `extraWords` — тройки их языка: без «^зп» в ru и be «зп-шка» уходило в «pg-irf» (скептик B56)
+        self.trigrams = trigrams.mapValues { $0 }.merging(Self.extraWords.mapValues { Set($0.flatMap(Self.trigrams(of:))) }) { $0.union($1) }
+            .filter { trigrams[$0.key] != nil }
         var words: [Language: Set<String>] = [:], starts: [Language: Set<String>] = [:]
         for word in userWords.map({ $0.lowercased() })
         where word.count >= 2 && word.allSatisfy({ $0.isLetter || $0 == "'" || $0 == "-" }) {
@@ -480,6 +482,8 @@ public struct LanguageDetector: Sendable {
               start.allSatisfy({ $0.isLetter || $0 == "'" || $0 == "-" }) else { return false }
         let lower = start.lowercased()
         if userPrefixes[language]?.contains(lower) == true || userWords[language]?.contains(lower) == true { return true }
+        // ponytail: начал `extraWords` здесь нет — «оке» как белорусское начало («окей») уводило на лету в белорусскую и
+        // русское «океан» после белорусской фразы, и та переписывалась по-русски (второй круг скептика B56). Цена — B57
         return Self.forms(start).contains { prefixes[language]?.contains($0) == true || filters[language]?.contains($0) == true }
     }
 
@@ -546,6 +550,18 @@ public struct LanguageDetector: Sendable {
         .pl: ["a", "i", "o", "u", "w", "z"],
     ]
 
+    /// Слова чата, которых нет в словарях (решение владельца 2026-11-19, B56): без них русское «ок» уходило в «jr». «зп» —
+    /// пара к «pg» из `notWords`: украинский словарь его знает, русский и белорусский нет, и «pg» уводило русский текст в
+    /// украинскую раскладку, а русское «зп» становилось «pg» (скептик 2026-11-19). Тройки слов списка — в таблицах троек
+    /// языка (`init`); начала — нет (`isPrefix`, B57).
+    static let extraWords: [Language: Set<String>] = [.ru: ["ок", "окей", "зп"], .be: ["ок", "окей", "зп"]]
+
+    /// Не слова, хотя в словаре есть (B56): сокращения и архаизм, чьи клавиши — «ок», «ну», «зп»; словарь держал их от
+    /// исправления, и по журналу владельца все 16 таких он правил вручную ⌥. Без регистра: «Jr» в начале сообщения — «Ок».
+    /// ponytail: список ручной — в классе 62 английских слова из 2–3 букв, чьи клавиши дают русское слово
+    /// (ничья, остаются как набраны); в журнале встретились только эти. Новые — по ручным ⌥ после «без изменений».
+    static let notWords: [Language: Set<String>] = [.en: ["jr", "ye", "pg"], .pl: ["jr", "pg"]]
+
     /// Как слово ищется в словаре, где регистр сохранён: как набрано, строчными и с заглавной.
     /// Строчное совпадает с именем («iban» — «Iban», «london» — «London»: в чатах имена пишут
     /// строчными), но не с аббревиатурой из одних заглавных («nj» — не «NJ»).
@@ -601,6 +617,8 @@ public struct LanguageDetector: Sendable {
         }
         // растянутая гласная — междометие («аааа», «ооо»): в словарях её нет
         let lower = word.lowercased()
+        if Self.notWords[language]?.contains(lower) == true { return false }
+        if Self.extraWords[language]?.contains(lower) == true { return true }
         if let first = lower.first, lower.allSatisfy({ $0 == first }), Self.vowels[language]?.contains(first) == true {
             return true
         }

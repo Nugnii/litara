@@ -4,6 +4,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-11-19
+
+### Fixed
+- "jr" typed in the English layout becomes "ок" again, at the start of a message, mid-sentence and as a one-word
+  reply sent with Enter. The English dictionary counted "jr" as a word, and a word that is already a word is never
+  changed. The same for "ye" → "ну" and "pg" → "зп".
+- "ок", "окей" and "зп" typed in Russian or Belarusian stay as typed: the dictionaries did not know them, and "ок"
+  turned into "jr", "зп" into "pg" ("зп-шка" into "pg-irf").
+
 ## [0.31.0] - 2026-11-19
 
 ### Added

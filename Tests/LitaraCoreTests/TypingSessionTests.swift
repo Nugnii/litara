@@ -1052,3 +1052,31 @@ private func onScreen(_ input: String, from start: Language, detector: LanguageD
     _ = try type("ФЗШ ", in: &s, layouts: layouts)
     #expect(!s.cycleWord().isEmpty)
 }
+
+@Test @MainActor func chatWordsWinOverRareEnglishAbbreviations() throws {
+    // B56 (решение владельца 2026-11-19): «jr», «ye», «pg» в английском словаре (сокращения и архаизм) держали «ок», «ну»,
+    // «зп» от исправления — по журналу владельца все 16 таких слов он правил вручную; «ок» и «окей» словари ru и be не
+    // знали, и русское «ок» само уходило в «jr»
+    let (detector, layouts) = try makeDetector(ownerLayoutIDs, pcPunctuation: true)
+    func run(_ input: String, from start: Language) throws -> [TypingSession.Action] {
+        var s = TypingSession(detector: detector, layouts: layouts, current: start)
+        return try type(input, in: &s, layouts: layouts)
+    }
+    // в начале сообщения, одним словом-ответом (Enter) и после английского слова
+    #expect(try run("jr ", from: .en) == [.replace(deleteCount: 2, text: "ок"), .switchLayout(.ru)])
+    #expect(try run("Jr ", from: .en) == [.replace(deleteCount: 2, text: "Ок"), .switchLayout(.ru)])
+    #expect(try run("jr\n", from: .en) == [.replace(deleteCount: 2, text: "ок"), .switchLayout(.ru)])
+    #expect(try run("hello jr ", from: .en) == [.replace(deleteCount: 2, text: "ок"), .switchLayout(.ru)])
+    #expect(try run("ye ", from: .en) == [.replace(deleteCount: 2, text: "ну"), .switchLayout(.ru)])
+    // «ок» по-русски и по-белорусски — слово, а не «jr»
+    for word in ["ок ", "Ок ", "окей "] {
+        #expect(try run(word, from: .ru).isEmpty, "\(word)")
+        #expect(try run(word, from: .be).isEmpty, "\(word)")
+    }
+    // «зп» словарь не знает — у владельца оно в «Моих словах»; свои слова сильнее списка: «jr» в них остаётся
+    let (own, _) = try makeDetector(ownerLayoutIDs, pcPunctuation: true, userWords: ["ЗП", "jr"])
+    var s = TypingSession(detector: own, layouts: layouts, current: .en)
+    #expect(try type("pg ", in: &s, layouts: layouts) == [.replace(deleteCount: 2, text: "зп"), .switchLayout(.ru)])
+    var mine = TypingSession(detector: own, layouts: layouts, current: .en)
+    #expect(try type("jr ", in: &mine, layouts: layouts).isEmpty)
+}
